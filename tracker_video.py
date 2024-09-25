@@ -48,7 +48,7 @@ def track_video(tracker_cfg):
     for fid in tqdm(range(len(frames))):
 
         # fit on the current frame
-        ret_dict = tracker.run(img=frames[fid], realign=True, prev_ret_dict=prev_ret_dict, kalman_filter=True)
+        ret_dict = tracker.run(img=frames[fid], realign=True, prev_ret_dict=prev_ret_dict, kalman_filter=False)
         prev_ret_dict = ret_dict
 
         # save
