@@ -1,6 +1,6 @@
 # FLAME Head Tracker
 
-## [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+## [![License: MIT]([https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT](https://github.com/PeizhiYan/flame-head-tracker/blob/main/LICENSE))
 
 - **Author**: Peizhi Yan
 - **Date Updated**: 09-24-2024
