@@ -1,0 +1,36 @@
+# ignore system files
+.DS_Store
+Thumbs.db
+
+# ignore Python compiled files
+*.pyc
+__pycache__/
+utils/__pycache__/
+
+# ignore downloaded repos
+nvdiffrast/
+pytorch3d/
+
+# ignore output folder
+output/
+
+# ignore example image and video
+assets/00012.png
+assets/IMG_2647.MOV
+
+# ignore licensed model files
+models/FLAME2020/
+models/deca_model.tar
+models/face_landmarker_v2_with_blendshapes.task
+models/fixed_displacement_256.npy
+models/FLAME_albedo_from_BFM.npz
+models/FLAME_texture.npz
+models/head_template.obj
+models/landmark_embedding.npy
+models/mean_texture.jpg
+models/texture_data_256.npy
+models/uv_face_eye_mask.png
+models/uv_face_mask.png
+
+
+
