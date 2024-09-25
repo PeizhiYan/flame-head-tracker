@@ -9,7 +9,7 @@
 ---
 
 <div style="text-align: center;">
-    <img src="./assets/demo.gif" height="150px">    
+    <img src="./assets/demo.gif">    
 </div>
 (First two example videos were from IMavatar: https://github.com/zhengyuf/IMavatar )
 
