@@ -14,6 +14,18 @@
 (First two example videos were from IMavatar: https://github.com/zhengyuf/IMavatar )
 
 
+
+
+
+
+## Table of Contents
+- 🔴 [Citation](#-citation)
+- 🟢 [Usage](#-usage)
+- 🟡 [Environment Setup](#-environment-setup)
+- 🔵 [Acknowledgements and Disclaimer](#-acknowledgements-and-disclaimer)
+
+
+
 ## 🔴 Citation
 
 This code was originally used for "Gaussian Deja-vu". Please consider cite our work if you find this code useful.
@@ -25,13 +37,6 @@ This code was originally used for "Gaussian Deja-vu". Please consider cite our w
     year={2025}
 }
 ```
-
-## Table of Contents
-- 🔴 [Citation](#-citation)
-- 🟢 [Usage](#-usage)
-- 🟡 [Environment Setup](#-environment-setup)
-- 🔵 [Acknowledgements and Disclaimer](#-acknowledgements-and-disclaimer)
-
 
 
 ## 🟢 Usage
