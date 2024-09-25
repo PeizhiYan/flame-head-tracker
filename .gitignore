@@ -7,6 +7,9 @@ Thumbs.db
 __pycache__/
 utils/__pycache__/
 
+# ignore jupyter notebook files
+.ipynb_checkpoints
+
 # ignore downloaded repos
 nvdiffrast/
 pytorch3d/
