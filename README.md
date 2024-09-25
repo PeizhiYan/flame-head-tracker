@@ -27,10 +27,10 @@ This code was originally used for "Gaussian Deja-vu". Please consider cite our w
 ```
 
 ## Table of Contents
-- 🔴 [Citation](#🔴-citation)
-- 🟢 [Usage](#🟢-usage)
-- 🟡 [Environment Setup](#🟡-environment-setup)
-- 🔵 [Acknowledgements and Disclaimer](#🔵-acknowledgements-and-disclaimer)
+- 🔴 [Citation](#-citation)
+- 🟢 [Usage](#-usage)
+- 🟡 [Environment Setup](#-environment-setup)
+- 🔵 [Acknowledgements and Disclaimer](#-acknowledgements-and-disclaimer)
 
 
 
