@@ -28,7 +28,7 @@
 
 ## 🔴 Citation
 
-This code was originally used for "Gaussian Deja-vu". Please consider cite our work if you find this code useful.
+This code was originally used for "Gaussian Deja-vu" (accepted for WACV 2025 in Round 1). Please consider cite our work if you find this code useful.
 ```
 @misc{yan2025gaussian,
     title={Gaussian Deja-vu: Creating Controllable 3D Gaussian Head-Avatars with Enhanced Generalization and Personalization Abilities},
