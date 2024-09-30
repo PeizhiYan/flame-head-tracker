@@ -2,7 +2,7 @@
 ## FLAME Video Tracker.                   #
 ## -------------------------------------- #
 ## Author: Peizhi Yan                     #
-## Update: 09/29/2024                     #
+## Update: 09/30/2024                     #
 ###########################################
 
 ## Copyright (C) Peizhi Yan. 2024
@@ -48,7 +48,7 @@ def track_video_legacy(tracker_cfg):
     for fid in tqdm(range(len(frames))):
 
         # fit on the current frame
-        ret_dict = tracker.run(img=frames[fid], realign=True, prev_ret_dict=prev_ret_dict, kalman_filter=False)
+        ret_dict = tracker.run(img=frames[fid], realign=True, prev_ret_dict=prev_ret_dict)
         prev_ret_dict = ret_dict
 
         # save
@@ -101,13 +101,13 @@ def track_video(tracker_cfg):
     ###########################
     tracker = Tracker(tracker_cfg)
 
-    # frames = frames[:10] # debug only
+    # frames = frames[:30] # for debugging only
 
     #######################
     # process all frames  #
     #######################
     print(f'Processing video: {video_path}')
-    ret_dict_all = tracker.run_all_images(imgs=frames, realign=True, kalman_filter=False)
+    ret_dict_all = tracker.run_all_images(imgs=frames, realign=True)
 
     #################
     # save results  #

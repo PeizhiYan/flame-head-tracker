@@ -4,7 +4,7 @@ import numpy as np
 from filterpy.kalman import KalmanFilter
 
 # Function to initialize the Kalman Filter with matrices
-def initialize_kalman_matrix(m, n):
+def initialize_kalman_matrix(m, n, measure_noise=1e-5, process_noise=1e-5):
     """
     matrix size: m x n
     """
@@ -17,13 +17,13 @@ def initialize_kalman_matrix(m, n):
     kf.H = np.eye(m*n)  # Measurement matrix (observing the full state)
 
     # Process noise covariance (Q)
-    kf.Q = np.eye(m*n) * 1e-5  # Small process noise
+    kf.Q = np.eye(m*n) * process_noise  # Process noise
 
     # Measurement noise covariance (R)
-    kf.R = np.eye(m*n) * 1  # Measurement noise (adjust based on your scenario)
+    kf.R = np.eye(m*n) * measure_noise  # Measurement noise (adjust based on your scenario)
 
     # Initial state covariance (P)
-    kf.P = np.eye(m*n) * 1000  # High initial uncertainty in state
+    kf.P = np.eye(m*n) * 100  # Initial uncertainty in state
 
     # Initial state (X), assuming zero matrix (you can initialize with a prior estimate if available)
     kf.x = np.zeros((m*n, 1))  # Initial state (flattened n x n matrix)
@@ -35,6 +35,11 @@ def initialize_kalman_matrix(m, n):
 def kalman_filter_update_matrix(kf, measurement_matrix):
     m = measurement_matrix.shape[0]
     n = measurement_matrix.shape[1]
+
+    # Check for invalid values in the measurement matrix
+    if np.any(np.isnan(measurement_matrix)) or np.any(np.isinf(measurement_matrix)):
+        print("Invalid measurement, skipping update")
+        return None  # Skip update on invalid data
 
     # Flatten the matrix to fit into the Kalman filter
     measurement = measurement_matrix.flatten().reshape(-1, 1)  # Flatten and reshape to column vector

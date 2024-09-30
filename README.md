@@ -3,8 +3,8 @@
 ## [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 - **Author**: Peizhi Yan
-- **Date Updated**: 09-28-2024
-- **Version**: 1.01
+- **Date Updated**: 09-30-2024
+- **Version**: 1.1
 
 ---
 
@@ -16,25 +16,30 @@
 
 
 
-
-
 ## Table of Contents
-- 🔴 [Citation](#-citation)
+- 🟣 [Todos](#-todos)
+- 🟠 [Citation](#-citation)
 - 🟢 [Usage](#-usage)
 - 🟡 [Environment Setup](#-environment-setup)
 - 🔵 [Acknowledgements and Disclaimer](#-acknowledgements-and-disclaimer)
 
 
+## 🟣 Todos
+- [x] Improve video tracking speed. (in v1.01)
+- [x] Add Kalman filter for temporal camera pose smoothing. (in v1.1)
+- [ ] Temporal smooth in the face alignment and cropping. (expected in v1.2)
+- [ ] Add ear landmarks detection module, and include ear landmarks during the fitting process. (expected in v2.0)
 
-## 🔴 Citation
 
-This code was originally used for "Gaussian Deja-vu" (accepted for WACV 2025 in Round 1). Please consider cite our work if you find this code useful.
+## 🟠 Citation
+
+This code was originally used for "Gaussian Deja-vu" (accepted for WACV 2025 in Round 1). Please consider citing our work if you find this code useful.
 ```
-@misc{yan2025gaussian,
-    title={Gaussian Deja-vu: Creating Controllable 3D Gaussian Head-Avatars with Enhanced Generalization and Personalization Abilities},
-    author={Yan, Peizhi and Ward, Rabab and Tang, Qiang and Du, Shan},
-    note={Accepted at IEEE/CVF Winter Conference on Applications of Computer Vision (WACV) 2025},
-    year={2025}
+@article{yan2024gaussian,
+  title={Gaussian Deja-vu: Creating Controllable 3D Gaussian Head-Avatars with Enhanced Generalization and Personalization Abilities},
+  author={Yan, Peizhi and Ward, Rabab and Tang, Qiang and Du, Shan},
+  journal={arXiv preprint arXiv:2409.16147},
+  year={2024}
 }
 ```
 
@@ -116,6 +121,9 @@ tracker_cfg = {
     'subsample_fps': 30,      # subsample fps
     'video_path': './assets/IMG_2647.MOV',  # example video
     'save_path': './output',  # tracking result save path
+    'use_kalman_filter': False, # whether to use Kalman filter
+    'kalman_filter_measurement_noise_factor': 1e-5, # measurement noise level in Kalman filter 
+    'kalman_filter_process_noise_factor': 1e-5,     # process noise level in Kalman filter 
 }
 
 ## Note that, the first frame will take longer time to process

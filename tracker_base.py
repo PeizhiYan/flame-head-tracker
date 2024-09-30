@@ -80,6 +80,12 @@ class Tracker():
         self.flame_cfg = util.dict2obj(flame_cfg)
         self.device = tracker_cfg['device']
         self.img_size = tracker_cfg['result_img_size']
+        if 'use_kalman_filter' in tracker_cfg:
+            self.use_kalman_filter = tracker_cfg['use_kalman_filter']
+            self.kf_measure_noise = tracker_cfg['kalman_filter_measurement_noise_factor']
+            self.kf_process_noise = tracker_cfg['kalman_filter_process_noise_factor']
+        else:
+            self.use_kalman_filter = False
 
         # Mediapipe face landmark detector
         base_options = python.BaseOptions(model_asset_path=tracker_cfg['mediapipe_face_landmarker_v2_path'])
@@ -125,8 +131,14 @@ class Tracker():
         deca_cfg.model.extract_tex = True
         self.deca = DECA(config = deca_cfg, device=self.device)
 
-        # Kalman filter
-        self.kf = initialize_kalman_matrix(m=1, n=6)  # Initialize Kalman filter for 6DoF camera pose
+        # Kalman filters
+        if self.use_kalman_filter:
+            self.kf_R = initialize_kalman_matrix(m=1, n=3, 
+                                measure_noise=self.kf_measure_noise, 
+                                process_noise=self.kf_process_noise)  # Initialize Kalman filter for camera rotations
+            self.kf_T = initialize_kalman_matrix(m=1, n=3,
+                                measure_noise=self.kf_measure_noise, 
+                                process_noise=self.kf_process_noise)  # Initialize Kalman filter for camera translations
 
         print('Flame Tracker ready.')
 
@@ -158,29 +170,27 @@ class Tracker():
         return lmks_dense, blend_scores
 
 
-    def load_image_and_run(self, img_path, realign=True, prev_ret_dict=None, kalman_filter=False):
+    def load_image_and_run(self, img_path, realign=True, prev_ret_dict=None):
         """
         Load image from given path, then run FLAME tracking
         input:
             -img_path: image path
             -realign: for FFHQ, use False. for in-the-wild images, use True
             -prev_ret_dict: the results dictionary from the previous frame
-            -kalman_filter: only use it when track on video frames
         output:
             -ret_dict: results dictionary
         """
         img = read_img(img_path)
-        return self.run(img, realign, prev_ret_dict, kalman_filter)
+        return self.run(img, realign, prev_ret_dict)
 
     
-    def run(self, img, realign=True, prev_ret_dict=None, kalman_filter=False):
+    def run(self, img, realign=True, prev_ret_dict=None):
         """
         Run FLAME tracking on the given image
         input:
             -img: image data   numpy 
             -realign: for FFHQ, use False. for in-the-wild images, use True
             -prev_ret_dict: the results dictionary from the previous frame
-            -kalman_filter: only use it when track on video frames
         output:
             -ret_dict: results dictionary
         """
@@ -208,7 +218,7 @@ class Tracker():
             parsing_mask_aligned = self.face_parser.run(img_aligned)
         
         # run facial landmark-based fitting
-        ret_dict = self.run_fitting(img, deca_dict, prev_ret_dict, kalman_filter)
+        ret_dict = self.run_fitting(img, deca_dict, prev_ret_dict)
 
         # add more
         ret_dict['img'] = img
@@ -222,13 +232,12 @@ class Tracker():
         return ret_dict
     
 
-    def run_all_images(self, imgs : list, realign=True, kalman_filter=False):
+    def run_all_images(self, imgs : list, realign=True):
         """
         Run FLAME tracking on all loaded images
         input:
             -imgs: list of image data, [numpy] 
             -realign: for FFHQ, use False. for in-the-wild images, use True
-            -kalman_filter: only use it when track on video frames
         output:
             -ret_dict: results dictionary
         """
@@ -304,7 +313,7 @@ class Tracker():
                     deca_dict[key] = mean_shape_code
                 else:
                     deca_dict[key] = deca_dict_all[key][i:i+1]
-            ret_dict = self.run_fitting(img, deca_dict, prev_ret_dict, kalman_filter)
+            ret_dict = self.run_fitting(img, deca_dict, prev_ret_dict)
             prev_ret_dict = ret_dict
             for key in ret_dict.keys():
                 ret_dict_all[key].append(ret_dict[key])
@@ -340,9 +349,9 @@ class Tracker():
         return deca_dict
 
     
-    def run_fitting(self, img, deca_dict, prev_ret_dict, kalman_filter):
+    def run_fitting(self, img, deca_dict, prev_ret_dict):
         ## Stage 1: rigid fitting on the camera pose (6DoF)
-        ## Stage 2: fine-tune the expression parameters, the jaw pose (3DoF), and the eyes poses (6DoF)
+        ## Stage 2: fine-tune the expression parameters, the jaw pose (3DoF), and the eyes poses (3DoF + 3DoF)
 
         if prev_ret_dict is not None:
             continue_fit = True
@@ -436,9 +445,7 @@ class Tracker():
             cam = PerspectiveCamera(Rt=Rt, fov=self.fov, bg=self.bg_color, 
                                     image_width=self.W, image_height=self.H, znear=self.znear, zfar=self.zfar)
 
-            # render landmarks via NV diff renderer
-            # rendered = self.mesh_renderer.render_from_camera(vertices, self.mesh_faces, cam) # vertices should have the shape of [1, N, 3]
-            # verts_clip = rendered['verts_clip'] # [1, N, 3]
+            # project landmarks via NV diff renderer
             verts_clip = self.mesh_renderer.project_vertices_from_camera(vertices, cam)
 
             verts_ndc_3d = verts_clip_to_ndc(verts_clip, image_size=self.H, out_dim=3) # convert the clipped vertices to NDC, output [N, 3]
@@ -453,7 +460,7 @@ class Tracker():
             loss.backward()
             e_opt_rigid.step()
 
-            # # for debugging
+            # # for debugging only
             # if iter % 100 == 0:
             #     rendered_mesh_shape = rendered['rgba'][0,...,:3].detach().cpu().numpy()
             #     temp = (img_resized / 255. + rendered_mesh_shape) / 2
@@ -466,11 +473,17 @@ class Tracker():
         optimized_camera_pose = camera_pose + torch.cat((d_camera_rotation, d_camera_translation))
         optimized_camera_pose = optimized_camera_pose.detach()
 
-        if kalman_filter:
+        if self.use_kalman_filter == True:
             # apply Kalman filter on camera pose
             optimized_camera_pose_np = optimized_camera_pose.cpu().numpy()[None] # [1,6]
-            optimized_camera_pose_np = kalman_filter_update_matrix(self.kf, optimized_camera_pose_np)
-            optimized_camera_pose = torch.from_numpy(optimized_camera_pose_np[0]).to(self.device).detach()
+            R = optimized_camera_pose_np[:,:3]    # [1, 3]
+            T = optimized_camera_pose_np[:,3:]    # [1, 3]
+            # print(R, T)
+            R = kalman_filter_update_matrix(self.kf_R, R)
+            T = kalman_filter_update_matrix(self.kf_T, T)
+            # print(R, T)
+            # print('-----------------')
+            optimized_camera_pose = torch.from_numpy(np.concatenate([R, T], axis=1)[0]).to(self.device).detach()
 
         # prepare camera for Stage 2
         Rt = create_diff_world_to_view_matrix(optimized_camera_pose)
@@ -524,9 +537,7 @@ class Tracker():
                                         pose_params=optimized_pose, 
                                         eye_pose_params=eye_pose) # [1, N, 3]
 
-            # render landmarks via NV diff renderer
-            #rendered = self.mesh_renderer.render_from_camera(vertices, self.mesh_faces, cam) # vertices should have the shape of [1, N, 3]
-            #verts_clip = rendered['verts_clip'] # [1, N, 3]
+            # project landmarks via NV diff renderer
             verts_clip = self.mesh_renderer.project_vertices_from_camera(vertices, cam)
             verts_ndc_3d = verts_clip_to_ndc(verts_clip, image_size=self.H, out_dim=3) # convert the clipped vertices to NDC, output [N, 3]
             landmarks3d = self.flame.seletec_3d68(verts_ndc_3d[None]) # [1, 68, 3]
@@ -567,6 +578,7 @@ class Tracker():
             rendered_mesh_shape = rendered['rgba'][0,...,:3].detach().cpu().numpy()
             rendered_mesh_shape = (img_resized / 255. + rendered_mesh_shape) / 2
             rendered_mesh_shape = np.array(np.clip(rendered_mesh_shape * 255, 0, 255), dtype=np.uint8) # uint8
+
 
         ####################
         # Prepare results  #
