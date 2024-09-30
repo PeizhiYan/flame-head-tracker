@@ -189,6 +189,26 @@ class NVDiffRenderer(torch.nn.Module):
             raise NotImplementedError(f"Unknown lighting type: {self.lighting_type}")
         return diffuse
     
+    def project_vertices_from_camera(
+        self, verts, cam: MiniCam,
+    ):
+        """
+        Only project the vertices to 2D
+        """
+        world_view_transform = cam.world_view_transform.clone().to(verts)
+        world_view_transform[:,1] = -world_view_transform[:,1]
+        world_view_transform[:,2] = -world_view_transform[:,2]
+        RT = world_view_transform.T[None, ...]
+        
+        full_proj_transform = cam.full_proj_transform.clone()
+        full_proj_transform[:,1] = -full_proj_transform[:,1]
+        full_proj = full_proj_transform.T[None, ...].to(verts)
+        
+        image_size = int(cam.image_height // 8 * 8), int(cam.image_width // 8 * 8)
+        verts_clip = self.world_to_clip(verts, None, None, image_size, mvp=full_proj)
+
+        return verts_clip
+
     def render_from_camera(
         self, verts, faces, cam: MiniCam, background_color=[1., 1., 1.],
     ):
@@ -218,7 +238,7 @@ class NVDiffRenderer(torch.nn.Module):
             for k, v in output.items():
                 output[k] = F.interpolate(v.permute(0, 3, 1, 2), (cam.image_height, cam.image_width), mode='bilinear').permute(0, 2, 3, 1)
             return output
-    
+
     def render_mesh(
         self, verts, faces, RT, full_proj, image_size, background_color=[1., 1., 1.],
     ):

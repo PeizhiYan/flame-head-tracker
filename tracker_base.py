@@ -2,7 +2,7 @@
 ## FLAME Tracker Reconstruction Base.     #
 ## -------------------------------------- #
 ## Author: Peizhi Yan                     #
-## Update: 09/24/2024                     #
+## Update: 09/29/2024                     #
 ###########################################
 
 ## Copyright (C) Peizhi Yan. 2024
@@ -13,6 +13,7 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 import numpy as np # version 1.23.4, higher version may cause problem
+from tqdm import tqdm
 
 # Mediapipe  (version 0.10.15)
 import mediapipe as mp
@@ -220,25 +221,124 @@ class Tracker():
 
         return ret_dict
     
+
+    def run_all_images(self, imgs : list, realign=True, kalman_filter=False):
+        """
+        Run FLAME tracking on all loaded images
+        input:
+            -imgs: list of image data, [numpy] 
+            -realign: for FFHQ, use False. for in-the-wild images, use True
+            -kalman_filter: only use it when track on video frames
+        output:
+            -ret_dict: results dictionary
+        """
+        
+        NUM_OF_IMGS = len(imgs)
+        DECA_BATCH_SIZE = 16
+
+        # initialize output dictionary
+        ret_dict_all = {}
+        for key in ['img', 'img_aligned', 'parsing', 'parsing_aligned', 'lmks_dense', 'lmks_68', 'blendshape_scores', 
+                    'vertices', 'shape', 'exp', 'pose', 'eye_pose', 'tex', 'light', 'cam', 'img_rendered']:
+            ret_dict_all[key] = []
+
+        # run Mediapipe face detector and align images
+        print('Running face detector, face parser, and aligning images')
+        for i in tqdm(range(NUM_OF_IMGS)):
+            img = imgs[i]
+
+            # run Mediapipe face detector
+            lmks_dense, blend_scores = self.mediapipe_face_detection(img)
+            face_landmarks = convert_landmarks_mediapipe_to_dlib(lmks_mp=lmks_dense)
+
+            # re-align image (tracking standard), this image will be used in our network model
+            img_aligned = image_align(img, face_landmarks, output_size=self.img_size, standard='tracking', 
+                                    padding_mode='constant')
+
+            if realign:
+                # realign == True means that we will fit on realigned image
+                img = img_aligned
+
+            # run face parsing
+            parsing_mask = self.face_parser.run(img)
+            if realign:
+                parsing_mask_aligned = parsing_mask
+            else:
+                parsing_mask_aligned = self.face_parser.run(img_aligned)
+
+            ret_dict_all['img'].append(img)
+            ret_dict_all['img_aligned'].append(img_aligned)
+            ret_dict_all['parsing'].append(parsing_mask)
+            ret_dict_all['parsing_aligned'].append(parsing_mask_aligned)
+            ret_dict_all['lmks_dense'].append(lmks_dense)
+            ret_dict_all['lmks_68'].append(face_landmarks)
+            ret_dict_all['blendshape_scores'].append(blend_scores)
+
+
+        # run DECA reconstruction
+        print("Running DECA")
+        with torch.no_grad():
+            deca_dict_all = None
+            if NUM_OF_IMGS % DECA_BATCH_SIZE == 0: NUM_OF_BATCHES = NUM_OF_IMGS // DECA_BATCH_SIZE
+            else: NUM_OF_BATCHES = NUM_OF_IMGS // DECA_BATCH_SIZE + 1
+            for i in tqdm(range(NUM_OF_BATCHES)):
+                imgs_batch = ret_dict_all['img'][i*DECA_BATCH_SIZE : (i+1)*DECA_BATCH_SIZE]
+                deca_dict_batch = self.run_deca_batch(imgs_batch)
+                if deca_dict_all is None:
+                    deca_dict_all = deca_dict_batch
+                else:
+                    for key in deca_dict_batch:
+                        deca_dict_all[key] = torch.cat([deca_dict_all[key], deca_dict_batch[key]])
+        
+        # compute the mean shape code
+        mean_shape_code = torch.mean(deca_dict_all['shape'], dim=0)[None] # [1, 100]
+
+        # run facial landmark-based fitting
+        print("Fitting")
+        prev_ret_dict = None
+        for i in tqdm(range(NUM_OF_IMGS)):
+            img = ret_dict_all['img'][i]
+            deca_dict = {}
+            for key in deca_dict_all.keys():
+                if key == 'shape':
+                    deca_dict[key] = mean_shape_code
+                else:
+                    deca_dict[key] = deca_dict_all[key][i:i+1]
+            ret_dict = self.run_fitting(img, deca_dict, prev_ret_dict, kalman_filter)
+            prev_ret_dict = ret_dict
+            for key in ret_dict.keys():
+                ret_dict_all[key].append(ret_dict[key])
+
+        return ret_dict_all
     
+
+    @torch.no_grad()
     def run_deca(self, img):
-        image = self.deca.crop_image(img).to(self.device)
+        """ Run DECA on a single input image """
 
         # DECA Encode
-        with torch.no_grad():
-            codedict = self.deca.encode(image[None])
-
-        # Reconstruct
-        opdict, visdict = self.deca.decode(codedict) #tensor
-        
-        deca_dict = {}
-        for key in codedict:
-            deca_dict[key] = codedict[key]
-        for key in opdict:
-            deca_dict[key] = opdict[key]            
+        image = self.deca.crop_image(img).to(self.device)
+        deca_dict = self.deca.encode(image[None])
         
         return deca_dict
     
+
+    @torch.no_grad()
+    def run_deca_batch(self, imgs : list):
+        """ Run Deca on a batch of images """
+
+        # convert to batch tensor
+        images = []
+        for i in range(len(imgs)):
+            image = self.deca.crop_image(imgs[i]).to(self.device)
+            images.append(image[None])
+        images = torch.cat(images) # [N,C,H,W]
+
+        # DECA Encode
+        deca_dict = self.deca.encode(images)
+
+        return deca_dict
+
     
     def run_fitting(self, img, deca_dict, prev_ret_dict, kalman_filter):
         ## Stage 1: rigid fitting on the camera pose (6DoF)
@@ -337,8 +437,10 @@ class Tracker():
                                     image_width=self.W, image_height=self.H, znear=self.znear, zfar=self.zfar)
 
             # render landmarks via NV diff renderer
-            rendered = self.mesh_renderer.render_from_camera(vertices, self.mesh_faces, cam) # vertices should have the shape of [1, N, 3]
-            verts_clip = rendered['verts_clip'] # [1, N, 3]
+            # rendered = self.mesh_renderer.render_from_camera(vertices, self.mesh_faces, cam) # vertices should have the shape of [1, N, 3]
+            # verts_clip = rendered['verts_clip'] # [1, N, 3]
+            verts_clip = self.mesh_renderer.project_vertices_from_camera(vertices, cam)
+
             verts_ndc_3d = verts_clip_to_ndc(verts_clip, image_size=self.H, out_dim=3) # convert the clipped vertices to NDC, output [N, 3]
             landmarks3d = self.flame.seletec_3d68(verts_ndc_3d[None]) # [1, 68, 3]
             landmarks2d = landmarks3d[:,:,:2] / float(self.flame_cfg.cropped_size) * 2 - 1  # [1, 68, 2]
@@ -423,8 +525,9 @@ class Tracker():
                                         eye_pose_params=eye_pose) # [1, N, 3]
 
             # render landmarks via NV diff renderer
-            rendered = self.mesh_renderer.render_from_camera(vertices, self.mesh_faces, cam) # vertices should have the shape of [1, N, 3]
-            verts_clip = rendered['verts_clip'] # [1, N, 3]
+            #rendered = self.mesh_renderer.render_from_camera(vertices, self.mesh_faces, cam) # vertices should have the shape of [1, N, 3]
+            #verts_clip = rendered['verts_clip'] # [1, N, 3]
+            verts_clip = self.mesh_renderer.project_vertices_from_camera(vertices, cam)
             verts_ndc_3d = verts_clip_to_ndc(verts_clip, image_size=self.H, out_dim=3) # convert the clipped vertices to NDC, output [N, 3]
             landmarks3d = self.flame.seletec_3d68(verts_ndc_3d[None]) # [1, 68, 3]
             landmarks2d = landmarks3d[:,:,:2] / float(self.flame_cfg.cropped_size) * 2 - 1  # [1, 68, 2]
@@ -465,9 +568,6 @@ class Tracker():
             rendered_mesh_shape = (img_resized / 255. + rendered_mesh_shape) / 2
             rendered_mesh_shape = np.array(np.clip(rendered_mesh_shape * 255, 0, 255), dtype=np.uint8) # uint8
 
-        uv_texture = deca_dict['uv_texture_gt'].detach().cpu().permute(0,2,3,1)[0].numpy()
-        uv_texture = np.array(np.clip(uv_texture,0,1) * 255, dtype=np.uint8) # uint8 format
-        
         ####################
         # Prepare results  #
         ####################
@@ -480,7 +580,6 @@ class Tracker():
             'tex': params['tex'],
             'light': params['light'],
             'cam': optimized_camera_pose.detach().cpu().numpy(), # [6]
-            'uv_texture': uv_texture,
             'img_rendered': rendered_mesh_shape
         }
         

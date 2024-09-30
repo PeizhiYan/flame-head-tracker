@@ -3,8 +3,8 @@
 ## [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 - **Author**: Peizhi Yan
-- **Date Updated**: 09-24-2024
-- **Version**: 1.0
+- **Date Updated**: 09-28-2024
+- **Version**: 1.01
 
 ---
 
@@ -76,7 +76,6 @@ The result ```ret_dict``` contains the following data:
 - tex (1, 50) : the FLAME parametric texture code
 - light (1, 9, 3) : the estimated SH lighting coefficients
 - cam (6,) : the estimated 6DoF camera pose (yaw, pitch, roll, x, y, z)
-- uv_texture (256, 256, 3) : the UV texture map from DECA's reconstruction results
 - img_rendered : rendered shape on top of original image, for visualization purpose only
 - img (512, 512, 3) : the image on which we fit the FLAME model on
 - img_aligned (512, 512, 3) : the aligned image
@@ -85,6 +84,14 @@ The result ```ret_dict``` contains the following data:
 - lmks_dense (478, 2) : the 478 dense face landmarks from Mediapipe
 - lmks_68 (68, 2) : the 68 Dlib format face landmarks
 - blendshape_scores (52,) : the facial expression blendshape scores from Mediapipe
+
+**Example Reconstruction Result (realign=True)**:
+
+![](./assets/single_image_fitting_1.png)
+
+**Example Reconstruction Result (realign=False)**:
+
+![](./assets/single_image_fitting_2.png)
 
 
 ### Video Tracking
@@ -125,7 +132,7 @@ The results will be saved to the ```save_path```. The reconstruction result of e
 
 ### Prerequisites:
 
-- **GPU**: Nvidia GPU with >= 6GB memory. I tested the code on Nvidia A6000 GPU.
+- **GPU**: Nvidia GPU with >= 6GB memory (recommend > 8GB). I tested the code on Nvidia A6000 (48GB) GPU.
 - **OS**: Ubuntu Linux (tested on 22.04 LTS and 24.04 LTS), I haven't tested the code on Windows.
 
 ### Step 1: Create a conda environment. 
