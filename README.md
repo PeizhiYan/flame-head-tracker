@@ -82,6 +82,7 @@ The result ```ret_dict``` contains the following data:
 - light (1, 9, 3) : the estimated SH lighting coefficients
 - cam (6,) : the estimated 6DoF camera pose (yaw, pitch, roll, x, y, z)
 - img_rendered : rendered shape on top of original image, for visualization purpose only
+- mesh_rendered : rendered mesh shape with landmarks, for visualization purpose only
 - img (512, 512, 3) : the image on which we fit the FLAME model on
 - img_aligned (512, 512, 3) : the aligned image
 - parsing (512, 512, 3) : the face semantic parsing result of img   
