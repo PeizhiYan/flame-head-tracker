@@ -2,7 +2,7 @@
 ## FLAME Tracker Reconstruction Base.     #
 ## -------------------------------------- #
 ## Author: Peizhi Yan                     #
-## Update: 09/29/2024                     #
+## Update: 10/16/2024                     #
 ###########################################
 
 ## Copyright (C) Peizhi Yan. 2024
@@ -447,7 +447,6 @@ class Tracker():
 
             # project landmarks via NV diff renderer
             verts_clip = self.mesh_renderer.project_vertices_from_camera(vertices, cam)
-
             verts_ndc_3d = verts_clip_to_ndc(verts_clip, image_size=self.H, out_dim=3) # convert the clipped vertices to NDC, output [N, 3]
             landmarks3d = self.flame.seletec_3d68(verts_ndc_3d[None]) # [1, 68, 3]
             landmarks2d = landmarks3d[:,:,:2] / float(self.flame_cfg.cropped_size) * 2 - 1  # [1, 68, 2]
@@ -510,7 +509,7 @@ class Tracker():
         expr_params = [
             {'params': [d_exp], 'lr': 0.01}, 
             {'params': [d_jaw], 'lr': 0.025},
-            {'params': [eye_pose], 'lr': 0.02}
+            {'params': [eye_pose], 'lr': 0.05}
         ]
 
         # fine optimizer
@@ -569,15 +568,42 @@ class Tracker():
                                         pose_params=optimized_pose, 
                                         eye_pose_params=eye_pose)
 
+            # # render landmarks via NV diff renderer
+            # rendered = self.mesh_renderer.render_from_camera(vertices, self.mesh_faces, cam) # vertices should have the shape of [1, N, 3]
+            # verts_clip = rendered['verts_clip'] # [1, N, 3]
+            # verts_ndc_3d = verts_clip_to_ndc(verts_clip, image_size=self.H, out_dim=3) # convert the clipped vertices to NDC, output [N, 3]
+            # landmarks3d = self.flame.seletec_3d68(verts_ndc_3d[None]) # [1, 68, 3]
+            # landmarks2d = landmarks3d[:,:,:2] # [1, 68, 2]
+            # rendered_mesh_shape = rendered['rgba'][0,...,:3].detach().cpu().numpy()
+            # rendered_mesh_shape = (img_resized / 255. + rendered_mesh_shape) / 2
+            # rendered_mesh_shape = np.array(np.clip(rendered_mesh_shape * 255, 0, 255), dtype=np.uint8) # uint8
             # render landmarks via NV diff renderer
-            rendered = self.mesh_renderer.render_from_camera(vertices, self.mesh_faces, cam) # vertices should have the shape of [1, N, 3]
+            new_mesh_renderer = NVDiffRenderer().to(self.device) # there seems to be a bug with the NVDiffRenderer, so I create this new
+                                                                 # render everytime to render the image
+            rendered = new_mesh_renderer.render_from_camera(vertices, self.mesh_faces, cam) # vertices should have the shape of [1, N, 3]
             verts_clip = rendered['verts_clip'] # [1, N, 3]
             verts_ndc_3d = verts_clip_to_ndc(verts_clip, image_size=self.H, out_dim=3) # convert the clipped vertices to NDC, output [N, 3]
             landmarks3d = self.flame.seletec_3d68(verts_ndc_3d[None]) # [1, 68, 3]
-            landmarks2d = landmarks3d[:,:,:2] # [1, 68, 2]
+            landmarks2d = landmarks3d[:,:,:2].detach().cpu().numpy() # [1, 68, 2]
+            eyes_landmarks3d = verts_ndc_3d[self.R_EYE_INDICES + self.L_EYE_INDICES][None]  # [1, 10, 3]
+            eyes_landmarks2d = eyes_landmarks3d[:,:,:2].detach().cpu().numpy()  # [1, 10, 2]
             rendered_mesh_shape = rendered['rgba'][0,...,:3].detach().cpu().numpy()
-            rendered_mesh_shape = (img_resized / 255. + rendered_mesh_shape) / 2
+            rendered_mesh_shape_img = (img_resized / 255. + rendered_mesh_shape) / 2
+            rendered_mesh_shape_img = np.array(np.clip(rendered_mesh_shape_img * 255, 0, 255), dtype=np.uint8) # uint8
             rendered_mesh_shape = np.array(np.clip(rendered_mesh_shape * 255, 0, 255), dtype=np.uint8) # uint8
+
+            # Draw 2D landmarks as green dots
+            for coords in landmarks2d[0]:
+                coords = np.clip(coords, 0, self.H).astype(np.uint8)
+                #coords = np.clip((coords / 2 + 1) * self.H, 0, self.H).astype(np.uint8)
+                cv2.circle(rendered_mesh_shape, (coords[0], coords[1]), radius=1, color=(0, 255, 0), thickness=-1)  # Green color, filled circle
+
+            # Optionally draw eye landmarks as red dots
+            for coords in eyes_landmarks2d[0]:
+                coords = np.clip(coords, 0, self.H).astype(np.uint8)
+                #coords = np.clip((coords / 2 + 1) * self.H, 0, self.H).astype(np.uint8)
+                cv2.circle(rendered_mesh_shape, (coords[0], coords[1]), radius=1, color=(0, 0, 255), thickness=-1)  # Red color, filled circle
+
 
 
         ####################
@@ -592,7 +618,8 @@ class Tracker():
             'tex': params['tex'],
             'light': params['light'],
             'cam': optimized_camera_pose.detach().cpu().numpy(), # [6]
-            'img_rendered': rendered_mesh_shape
+            'img_rendered': rendered_mesh_shape_img,
+            'mesh_rendered': rendered_mesh_shape,
         }
         
         return ret_dict
