@@ -45,6 +45,18 @@ from utils.scene.cameras import PerspectiveCamera
 from utils.mp2dlib import convert_landmarks_mediapipe_to_dlib
 from utils.kalman_filter import initialize_kalman_matrix, kalman_filter_update_matrix
 
+# Function to check for NaN in dictionary of NumPy arrays
+def check_nan_in_dict(array_dict):
+    nan_detected = {}
+    flag = False # True: there exist at least a NaN value
+    for key, array in array_dict.items():
+        if np.isnan(array).any():
+            nan_detected[key] = True
+            flag = True
+        else:
+            nan_detected[key] = False
+    return nan_detected, flag
+
 
 class Tracker():
 
@@ -219,6 +231,11 @@ class Tracker():
         
         # run facial landmark-based fitting
         ret_dict = self.run_fitting(img, deca_dict, prev_ret_dict)
+
+        # check for NaNs, if there is any, return None
+        _, nan_status = check_nan_in_dict(ret_dict)
+        if nan_status:
+            return None
 
         # add more
         ret_dict['img'] = img
@@ -509,7 +526,7 @@ class Tracker():
         expr_params = [
             {'params': [d_exp], 'lr': 0.01}, 
             {'params': [d_jaw], 'lr': 0.025},
-            {'params': [eye_pose], 'lr': 0.05}
+            {'params': [eye_pose], 'lr': 0.03}
         ]
 
         # fine optimizer
