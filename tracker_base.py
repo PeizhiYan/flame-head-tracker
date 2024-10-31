@@ -169,6 +169,9 @@ class Tracker():
         # Detect face landmarks from the input image.
         detection_result = self.mediapipe_detector.detect(image)
 
+        if len(detection_result.face_blendshapes) == 0:
+            return None, None
+
         # Post-process mediapipe face blendshape scores
         blend_scores = detection_result.face_blendshapes[0]
         blend_scores = np.array(list(map(lambda l: l.score, blend_scores)), dtype=np.float32)
@@ -209,6 +212,10 @@ class Tracker():
         
         # run Mediapipe face detector
         lmks_dense, blend_scores = self.mediapipe_face_detection(img)
+        if lmks_dense is None:
+            # no face detected
+            return None
+
         face_landmarks = convert_landmarks_mediapipe_to_dlib(lmks_mp=lmks_dense)
 
         # re-align image (tracking standard), this image will be used in our network model
@@ -275,6 +282,9 @@ class Tracker():
 
             # run Mediapipe face detector
             lmks_dense, blend_scores = self.mediapipe_face_detection(img)
+            if lmks_dense is None:
+                # no face detected
+                continue
             face_landmarks = convert_landmarks_mediapipe_to_dlib(lmks_mp=lmks_dense)
 
             # re-align image (tracking standard), this image will be used in our network model
