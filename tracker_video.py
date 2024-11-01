@@ -47,9 +47,15 @@ def track_video_legacy(tracker_cfg):
     prev_ret_dict = None
     for fid in tqdm(range(len(frames))):
 
+        if os.path.exists(os.path.join(result_save_path, f'{fid}_compare.jpg')):
+            prev_ret_dict = None
+            continue
+
         # fit on the current frame
         ret_dict = tracker.run(img=frames[fid], realign=True, prev_ret_dict=prev_ret_dict)
         prev_ret_dict = ret_dict
+        if ret_dict is None:
+            continue
 
         # save
         save_file_path = os.path.join(result_save_path, f'{fid}.npy')

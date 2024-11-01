@@ -269,7 +269,7 @@ class Tracker():
         NUM_OF_IMGS = len(imgs)
         DECA_BATCH_SIZE = 16
 
-        # initialize output dictionary
+        # initialize preprocessing dictionary
         ret_dict_all = {}
         for key in ['img', 'img_aligned', 'parsing', 'parsing_aligned', 'lmks_dense', 'lmks_68', 'blendshape_scores', 
                     'vertices', 'shape', 'exp', 'pose', 'eye_pose', 'tex', 'light', 'cam', 'img_rendered']:
@@ -331,6 +331,10 @@ class Tracker():
 
         # run facial landmark-based fitting
         print("Fitting")
+        output_dict_all = {}
+        for key in ['img', 'img_aligned', 'parsing', 'parsing_aligned', 'lmks_dense', 'lmks_68', 'blendshape_scores', 
+                    'vertices', 'shape', 'exp', 'pose', 'eye_pose', 'tex', 'light', 'cam', 'img_rendered']:
+            output_dict_all[key] = []
         prev_ret_dict = None
         for i in tqdm(range(NUM_OF_IMGS)):
             img = ret_dict_all['img'][i]
@@ -342,10 +346,14 @@ class Tracker():
                     deca_dict[key] = deca_dict_all[key][i:i+1]
             ret_dict = self.run_fitting(img, deca_dict, prev_ret_dict)
             prev_ret_dict = ret_dict
+            if ret_dict is None:
+                continue
             for key in ret_dict.keys():
-                ret_dict_all[key].append(ret_dict[key])
+                output_dict_all[key].append(ret_dict[key])
+            for key in ret_dict_all.keys():
+                output_dict_all[key].append(ret_dict[key])
 
-        return ret_dict_all
+        return output_dict_all
     
 
     @torch.no_grad()
