@@ -3,7 +3,7 @@
 ## [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 - **Author**: Peizhi Yan
-- **Date Updated**: 10-16-2024
+- **Date Updated**: 10-31-2024
 - **Version**: 1.1
 
 ---
@@ -78,6 +78,7 @@ The result ```ret_dict``` contains the following data:
 - shape (1, 100) : the FLAME shape code
 - exp (1, 50) : the FLAME expression code
 - pose (1, 6) : the FLAME head (first 3 values) and jaw (last 3 values) poses
+- eye_pose (1, 6) : the FLAME eyeball poses
 - tex (1, 50) : the FLAME parametric texture code
 - light (1, 9, 3) : the estimated SH lighting coefficients
 - cam (6,) : the estimated 6DoF camera pose (yaw, pitch, roll, x, y, z)
