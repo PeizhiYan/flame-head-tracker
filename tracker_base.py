@@ -185,27 +185,29 @@ class Tracker():
         return lmks_dense, blend_scores
 
 
-    def load_image_and_run(self, img_path, realign=True, prev_ret_dict=None):
+    def load_image_and_run(self, img_path, realign=True, prev_ret_dict=None, shape_code=None):
         """
         Load image from given path, then run FLAME tracking
         input:
             -img_path: image path
             -realign: for FFHQ, use False. for in-the-wild images, use True
             -prev_ret_dict: the results dictionary from the previous frame
+            -shape_code: the pre-estimated global shape code
         output:
             -ret_dict: results dictionary
         """
         img = read_img(img_path)
-        return self.run(img, realign, prev_ret_dict)
+        return self.run(img, realign, prev_ret_dict, shape_code)
 
     
-    def run(self, img, realign=True, prev_ret_dict=None):
+    def run(self, img, realign=True, prev_ret_dict=None, shape_code=None):
         """
         Run FLAME tracking on the given image
         input:
             -img: image data   numpy 
             -realign: for FFHQ, use False. for in-the-wild images, use True
             -prev_ret_dict: the results dictionary from the previous frame
+            -shape_code: the pre-estimated global shape code
         output:
             -ret_dict: results dictionary
         """
@@ -237,7 +239,7 @@ class Tracker():
             parsing_mask_aligned = self.face_parser.run(img_aligned)
         
         # run facial landmark-based fitting
-        ret_dict = self.run_fitting(img, deca_dict, prev_ret_dict)
+        ret_dict = self.run_fitting(img, deca_dict, prev_ret_dict, shape_code)
 
         # check for NaNs, if there is any, return None
         _, nan_status = check_nan_in_dict(ret_dict)
@@ -384,7 +386,7 @@ class Tracker():
         return deca_dict
 
     
-    def run_fitting(self, img, deca_dict, prev_ret_dict):
+    def run_fitting(self, img, deca_dict, prev_ret_dict, shape_code):
         ## Stage 1: rigid fitting on the camera pose (6DoF)
         ## Stage 2: fine-tune the expression parameters, the jaw pose (3DoF), and the eyes poses (3DoF + 3DoF)
 
@@ -396,7 +398,11 @@ class Tracker():
         # convert the parameters to numpy arrays
         params = {}
         for key in ['shape', 'tex', 'exp', 'pose', 'light']:
-            params[key] = deca_dict[key].detach().cpu().numpy()
+            if key == 'shape' and shape_code is not None:
+                # use pre-estimated global shape code
+                params[key] = shape_code.detach().cpu().numpy()
+            else:
+                params[key] = deca_dict[key].detach().cpu().numpy()
 
         # resize for FLAME fitting
         img_resized = cv2.resize(img, (self.flame_cfg.cropped_size, self.flame_cfg.cropped_size))

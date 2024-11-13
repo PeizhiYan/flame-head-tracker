@@ -2,10 +2,11 @@
 ## FLAME Video Tracker.                   #
 ## -------------------------------------- #
 ## Author: Peizhi Yan                     #
-## Update: 09/30/2024                     #
+## Update: 11/12/2024                     #
 ###########################################
-
-## Copyright (C) Peizhi Yan. 2024
+#
+# Copyright (C) Peizhi Yan. 2024
+#
 
 import os
 import numpy as np
@@ -13,9 +14,18 @@ import cv2
 from tqdm import tqdm
 import pickle
 import torch
+import random
 
 from utils.video_utils import video_to_images
 from tracker_base import Tracker
+
+def sample_frames(frames, N):
+    # If N is greater than the number of frames, return the entire list
+    if N >= len(frames):
+        return frames
+    # Otherwise, return a random sample of N frames
+    return random.sample(frames, N)
+
 
 
 def track_video_legacy(tracker_cfg):
@@ -40,6 +50,26 @@ def track_video_legacy(tracker_cfg):
     ###########################
     tracker = Tracker(tracker_cfg)
 
+    ###########################
+    ## Estimate Global Shape  #     
+    ###########################
+    print('Estimating global shape code')
+    MAX_SAMPLE_SIZE = 100
+    frames_subset = sample_frames(frames, MAX_SAMPLE_SIZE) # we take a subset of frames to estimate the global shape code
+    with torch.no_grad():
+        mean_shape_code = torch.zeros([1,100], dtype=torch.float32).to(tracker.device)
+        counter = 0
+        for i in tqdm(range(len(frames_subset))):
+            img = frames_subset[i]
+            deca_dict = tracker.run_deca(img) # run DECA reconstruction
+            if deca_dict is not None:
+                mean_shape_code += deca_dict['shape']
+                counter += 1
+        if counter == 0:
+            mean_shape_code = None
+        else:
+            mean_shape_code /= counter # compute the average shape code
+
     #######################
     # process all frames  #
     #######################
@@ -53,7 +83,7 @@ def track_video_legacy(tracker_cfg):
         #     continue
 
         # fit on the current frame
-        ret_dict = tracker.run(img=frames[fid], realign=True, prev_ret_dict=prev_ret_dict)
+        ret_dict = tracker.run(img=frames[fid], realign=True, prev_ret_dict=prev_ret_dict, shape_code=mean_shape_code)
         prev_ret_dict = ret_dict
         if ret_dict is None:
             continue
