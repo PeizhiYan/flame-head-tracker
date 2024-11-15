@@ -30,6 +30,7 @@
 - [ ] Temporal smooth in the face alignment and cropping. (expected in v1.2)
 - [ ] Add ear landmarks detection module, and include ear landmarks during the fitting process. (expected in v2.0)
 - [ ] Add support for photometric fitting. (expected in v2.0)
+- [ ] Add support for multi-view fitting. (expected in v2.1)
 
 
 ## 🟠 Citation
