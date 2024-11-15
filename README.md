@@ -54,7 +54,7 @@ This code was originally used for "Gaussian Deja-vu" (accepted for WACV 2025 in 
 
 Please follow the example in: ```./Example_single-image-reconstruction.ipynb```
 
-```
+```python
 from tracker_base import Tracker
 
 tracker_cfg = {
@@ -106,7 +106,7 @@ The result ```ret_dict``` contains the following data:
 
 Please follow the example in: ```./Example_video-reconstruction.ipynb```
 
-```
+```python
 from tracker_video import track_video
 
 tracker_cfg = {
