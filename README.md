@@ -12,13 +12,18 @@
   (First two example videos were from IMavatar: <a href="https://github.com/zhengyuf/IMavatar">https://github.com/zhengyuf/IMavatar</a>)
 </div>
 
-- **Author**: Peizhi Yan  
-- **Date Updated**: 11-20-2024  
-- **Version**: 2.0  
+**Author**: Peizhi Yan  
+**Date Updated**: 11-20-2024  
+**Version**: 2.0
+
 
 ## Supported Features:
-- Mediapipe Landmarks-based Fitting (📷single-image reconstruction or 🎥video tracking)
-- Photometric Fitting (📷single-image reconstruction)
+- **Landmarks-based Fitting** 
+  - 🙂Mediapipe face landmarks
+  - 📷single-image reconstruction
+  - 🎥monocular video tracking
+- **Photometric Fitting**
+  - 📷single-image reconstruction
 
 
 
@@ -28,19 +33,19 @@
 
 
 
-## Table of Contents
-- 🟣 [Todos](#-todos)
-- 🟠 [Citation](#-citation)
-- 🟢 [Usage](#-usage)
-- 🟡 [Environment Setup](#-environment-setup)
-- 🔵 [Acknowledgements and Disclaimer](#-acknowledgements-and-disclaimer)
+## 📖Table of Contents
+- 📃 [Todos](#-todos)
+- 🧸 [Citation](#-citation)
+- 🦖 [Usage](#-usage)
+- 🖥️ [Environment Setup](#-environment-setup)
+- ⚖️ [Acknowledgements and Disclaimer](#-acknowledgements-and-disclaimer)
 
 
 
 
 
 
-## 🟣 Todos
+## 📃 Todos
 <details>
   <summary><b>Todo List</b></summary>
 
@@ -59,10 +64,11 @@
 
 
 
-## 🟠 Citation
+## 🧸 Citation
 
 This code was originally used for "Gaussian Deja-vu" (accepted for WACV 2025 in Round 1). Please consider citing our work if you find this code useful.
-```
+
+```bibtex
 @article{yan2024gaussian,
   title={Gaussian Deja-vu: Creating Controllable 3D Gaussian Head-Avatars with Enhanced Generalization and Personalization Abilities},
   author={Yan, Peizhi and Ward, Rabab and Tang, Qiang and Du, Shan},
@@ -78,7 +84,7 @@ This code was originally used for "Gaussian Deja-vu" (accepted for WACV 2025 in 
 
 
 
-## 🟢 Usage
+## 🦖 Usage
 
 [Return to top](#flame-head-tracker)
 
@@ -200,7 +206,7 @@ The results will be saved to the ```save_path```. The reconstruction result of e
 
 
 
-## 🟡 Environment Setup
+## 🖥️ Environment Setup
 
 [Return to top](#flame-head-tracker)
 
@@ -364,7 +370,7 @@ The final structure of ```./models/``` is:
 
 
 
-## 🔵 Acknowledgements and Disclaimer
+## ⚖️ Acknowledgements and Disclaimer
 
 [Return to top](#flame-head-tracker)
 
