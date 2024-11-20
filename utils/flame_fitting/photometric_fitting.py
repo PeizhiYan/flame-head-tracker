@@ -1,3 +1,9 @@
+#
+# Original: https://github.com/HavenFeng/photometric_optimization
+#
+# Code modified by Peizhi Yan, 2024
+#
+
 import os, sys
 import cv2
 import torch
@@ -18,14 +24,16 @@ torch.backends.cudnn.benchmark = True
 
 
 class PhotometricFitting(object):
-    def __init__(self, config, device='cuda'):
+    def __init__(self, config, flame, flametex, device='cuda'):
         self.batch_size = config.batch_size
         self.image_size = config.image_size
         self.config = config
         self.device = device
         #
-        self.flame = FLAME(self.config).to(self.device)
-        self.flametex = FLAMETex(self.config).to(self.device)
+        #self.flame = FLAME(self.config).to(self.device)
+        #self.flametex = FLAMETex(self.config).to(self.device)
+        self.flame = flame
+        self.flametex = flametex
 
         self._setup_renderer()
 

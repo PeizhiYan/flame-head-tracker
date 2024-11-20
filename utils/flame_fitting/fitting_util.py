@@ -155,6 +155,8 @@ def face_vertices(vertices, faces):
 
 
 def vertex_normals(vertices, faces):
+    # print(vertices.shape)
+    # print(faces.shape)
     """
     :param vertices: [batch size, number of vertices, 3]
     :param faces: [batch size, number of faces, 3]

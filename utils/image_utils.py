@@ -2,7 +2,7 @@
 ## Utility functions for Images.     #
 ## Author: Peizhi Yan                #
 ##   Date: 02/27/2024                #
-## Update: 05/11/2024                #
+## Update: 11/19/2024                #
 ######################################
 
 import numpy as np
@@ -10,6 +10,37 @@ import cv2
 import PIL
 import scipy
 
+
+def get_face_mask(parsing : np.array, keep_ears : bool = False):
+    """
+    Given parsing mask get the face region mask.
+    {
+     0: 'background'
+     1: 'skin', 
+     2: 'l_brow', 3: 'r_brow', 4: 'l_eye', 5: 'r_eye', 6: 'eye_g', 
+     7: 'l_ear', 8: 'r_ear', 9: 'ear_r', 
+     10: 'nose', 
+     11: 'mouth', 12: 'u_lip', 13: 'l_lip', 
+     14: 'neck', 15: 'neck_l', 
+     16: 'cloth', 17: 'hair', 18: 'hat'
+    }
+    inputs:
+        - parsing: [N, 512, 512] or [512, 512]   np.uint8
+    returns:
+        - face_mask: [N, 512, 512, 1] or [512, 512, 1]    np.float32
+    """
+    # Expand parsing mask dimensions to match imgs for broadcasting
+    parsing_expanded = np.expand_dims(parsing, -1)
+    
+    # Create a mask where parsing == 0 (background), then invert it to target the foreground
+    face_mask = parsing_expanded != 0 # remove background first
+    non_face_mask = parsing_expanded >= 14 # non-facial region
+    face_mask = (face_mask ^ non_face_mask)
+    if keep_ears == False:
+        ear_mask = (parsing_expanded >= 7) & (parsing_expanded <=9) # ears
+        face_mask ^ ear_mask
+    
+    return face_mask.astype(np.float32)
 
 
 def resize_image_proportionally(img, max_length=3000):

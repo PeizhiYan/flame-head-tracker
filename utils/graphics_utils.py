@@ -253,7 +253,7 @@ def verts_clip_to_ndc(verts_clip : torch.tensor, image_size, out_dim=2):
     #    - image_size: int   it should match the rendered image size (assume height == width)
     #    - out_dim:    int   the output dimension be either 2 for 2D or 3 for 3D
     # returns:
-    #    - verts_ndc_2d: torch.tensor of shape [N, 2]
+    #    - verts_ndc: torch.tensor of shape [N, out_dim]
     verts_ndc = verts_clip[:, :, :3] / verts_clip[:, :, 3:]
     verts_ndc = verts_ndc[0, :, :out_dim]
     verts_ndc[:,1] *= -1 # flip y

@@ -6,6 +6,10 @@
 # from Toyota Motor Europe NV/SA is strictly prohibited.
 #
 
+#
+# This code was partially modified by Peizhi Yan, 2024
+#
+
 from typing import Tuple, Literal
 import nvdiffrast.torch as dr
 import torch
@@ -27,6 +31,16 @@ class NVDiffRenderer(torch.nn.Module):
         self.lighting_type = lighting_type
         self.lighting_space = lighting_space
         self.glctx = dr.RasterizeGLContext() if use_opengl else dr.RasterizeCudaContext()
+        
+        ## lighting (code from https://github.com/HavenFeng/photometric_optimization/blob/master/renderer.py#L207)
+        pi = np.pi
+        constant_factor = torch.tensor(
+            [1 / np.sqrt(4 * pi), ((2 * pi) / 3) * (np.sqrt(3 / (4 * pi))), ((2 * pi) / 3) * (np.sqrt(3 / (4 * pi))), \
+             ((2 * pi) / 3) * (np.sqrt(3 / (4 * pi))), (pi / 4) * (3) * (np.sqrt(5 / (12 * pi))),
+             (pi / 4) * (3) * (np.sqrt(5 / (12 * pi))), \
+             (pi / 4) * (3) * (np.sqrt(5 / (12 * pi))), (pi / 4) * (3 / 2) * (np.sqrt(5 / (12 * pi))),
+             (pi / 4) * (1 / 2) * (np.sqrt(5 / (4 * pi)))])
+        self.register_buffer('constant_factor', constant_factor)
 
     def mvp_from_camera_param(self, RT, K, image_size):
         # projection matrix
@@ -194,6 +208,7 @@ class NVDiffRenderer(torch.nn.Module):
     ):
         """
         Only project the vertices to 2D
+        Added by: Peizhi Yan, 2024
         """
         world_view_transform = cam.world_view_transform.clone().to(verts)
         world_view_transform[:,1] = -world_view_transform[:,1]
@@ -296,3 +311,4 @@ class NVDiffRenderer(torch.nn.Module):
             'rgba': rgba_aa.flip(1),
             'verts_clip': verts_clip,
         }
+    

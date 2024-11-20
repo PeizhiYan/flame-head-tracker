@@ -10,6 +10,8 @@ utils/__pycache__/
 # ignore jupyter notebook files
 .ipynb_checkpoints
 
+testing.ipynb
+
 # ignore downloaded repos
 nvdiffrast/
 pytorch3d/
@@ -19,6 +21,7 @@ output/
 
 # ignore example image and video
 assets/00012.png
+assets/FFHQ/
 assets/IMG_2647.MOV
 
 # ignore licensed model files

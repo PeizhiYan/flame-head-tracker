@@ -136,7 +136,7 @@ class Renderer(nn.Module):
         '''
         batch_size = vertices.shape[0]
         ## rasterizer near 0 far 100. move mesh so minz larger than 0
-        transformed_vertices[:, :, 2] = transformed_vertices[:, :, 2] + 10
+        # transformed_vertices[:, :, 2] = transformed_vertices[:, :, 2] + 10
 
         # Attributes
         face_vertices_ = face_vertices(vertices, self.faces.expand(batch_size, -1, -1))

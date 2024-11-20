@@ -2,7 +2,7 @@
 ## FLAME Tracker Reconstruction Base.     #
 ## -------------------------------------- #
 ## Author: Peizhi Yan                     #
-## Update: 10/16/2024                     #
+## Update: 11/19/2024                     #
 ###########################################
 
 ## Copyright (C) Peizhi Yan. 2024
@@ -23,7 +23,7 @@ from mediapipe.tasks.python import vision
 ## FLAME
 from utils.flame_lib.FLAME import FLAME, FLAMETex
 
-## FLAME fitting
+## FLAME photometric fitting utilities
 import utils.flame_fitting.fitting_util as util
 from utils.flame_fitting.renderer import Renderer
 
@@ -32,7 +32,7 @@ from utils.face_parsing.FaceParsingUtil import FaceParsing
 
 ## Utility
 import utils.o3d_utils as o3d_utils
-from utils.image_utils import read_img, min_max, uint8_img, norm_img, image_align, display_landmarks_with_cv2
+from utils.image_utils import read_img, min_max, uint8_img, norm_img, image_align, display_landmarks_with_cv2, get_face_mask
 from utils.graphics_utils import create_diff_world_to_view_matrix, verts_clip_to_ndc
 
 ## DECA
@@ -44,6 +44,8 @@ from utils.mesh_renderer import NVDiffRenderer
 from utils.scene.cameras import PerspectiveCamera
 from utils.mp2dlib import convert_landmarks_mediapipe_to_dlib
 from utils.kalman_filter import initialize_kalman_matrix, kalman_filter_update_matrix
+from utils.loss_utils import *
+
 
 # Function to check for NaN in dictionary of NumPy arrays
 def check_nan_in_dict(array_dict):
@@ -70,15 +72,16 @@ class Tracker():
             'flame_model_path': tracker_cfg['flame_model_path'],
             'flame_lmk_embedding_path': tracker_cfg['flame_lmk_embedding_path'],
             'tex_space_path': tracker_cfg['tex_space_path'],
-            'camera_params': 3,
+            'tex_type': 'BFM',
+            'camera_params': 3,          # do not change it
             'shape_params': 100,
-            'expression_params': 50,
+            'expression_params': 50,     # we use the first 50 FLAME expression coefficients
             'pose_params': 6,
-            'tex_params': 50,
+            'tex_params': 50,            # we use the first 50 FLAME texture model coefficients
             'use_face_contour': False,   # we don't use the face countour landmarks
-            'cropped_size': 256,
-            'batch_size': 1,
-            'image_size': 224,
+            'cropped_size': 256,         # the render size for rendering the mesh
+            'batch_size': 1,             # do not change it
+            'image_size': 224,           # used in DECA, do not change it
             'e_lr': 0.01,
             'e_wd': 0.0001,
             'savefolder': './test_results/',
@@ -110,7 +113,7 @@ class Tracker():
         # Face parsing model
         self.face_parser = FaceParsing(model_path=tracker_cfg['face_parsing_model_path'])
 
-        # FLAME model
+        # FLAME model and FLAME texture model
         self.flame = FLAME(self.flame_cfg).to(self.device)
         self.flametex = FLAMETex(self.flame_cfg).to(self.device)
 
@@ -120,21 +123,23 @@ class Tracker():
         self.R_EYE_INDICES = [4597, 4543, 4511, 4479, 4575] # right eye FLAME mesh indices
         self.L_EYE_INDICES = [4051, 3997, 3965, 3933, 4020] # left eye FLAME mesh indices
 
-        # FLAME render
-        self.flame_render = Renderer(self.flame_cfg.cropped_size, obj_filename=tracker_cfg['template_mesh_file_path']).to(self.device)
-
         # Camera settings
         self.H = self.W = self.flame_cfg.cropped_size
         self.fov = 20.0  # x&y-axis FOV
         self.bg_color = (1.0,1.0,1.0) # White
         self.znear = 0.01
         self.zfar  = 100.0
-        
-        # Nvidia differentiable mesh render
+
+        # FLAME render (from DECA)
+        self.flame_texture_render = Renderer(self.flame_cfg.cropped_size, 
+                                     obj_filename=tracker_cfg['template_mesh_file_path']).to(self.device)
+
+        # Nvidia differentiable mesh render (from GaussianAvatars)
         self.mesh_renderer = NVDiffRenderer().to(self.device)
 
         # Load the template FLAME triangle faces
-        _, self.faces, _, _ = o3d_utils._read_obj_file(tracker_cfg['template_mesh_file_path'], uv=True)
+        _, self.faces, self.uv_coords, _ = o3d_utils._read_obj_file(tracker_cfg['template_mesh_file_path'], uv=True)
+        self.uv_coords = np.array(self.uv_coords, dtype=np.float32)
         self.mesh_faces = torch.from_numpy(self.faces).to(self.device).detach() # [F, 3]
 
         # Load DECA model
@@ -185,27 +190,31 @@ class Tracker():
         return lmks_dense, blend_scores
 
 
-    def load_image_and_run(self, img_path, realign=True, prev_ret_dict=None, shape_code=None):
+    def load_image_and_run(self, 
+                           img_path, realign=True, photometric_fitting=False,
+                           prev_ret_dict=None, shape_code=None):
         """
         Load image from given path, then run FLAME tracking
         input:
             -img_path: image path
             -realign: for FFHQ, use False. for in-the-wild images, use True
+            -photometric_fitting: whether to use photometric fitting or landmarks only
             -prev_ret_dict: the results dictionary from the previous frame
             -shape_code: the pre-estimated global shape code
         output:
             -ret_dict: results dictionary
         """
         img = read_img(img_path)
-        return self.run(img, realign, prev_ret_dict, shape_code)
+        return self.run(img, realign, photometric_fitting, prev_ret_dict, shape_code)
 
     
-    def run(self, img, realign=True, prev_ret_dict=None, shape_code=None):
+    def run(self, img, realign=True, photometric_fitting=False, prev_ret_dict=None, shape_code=None):
         """
         Run FLAME tracking on the given image
         input:
             -img: image data   numpy 
             -realign: for FFHQ, use False. for in-the-wild images, use True
+            -photometric_fitting: whether to use photometric fitting or landmarks only
             -prev_ret_dict: the results dictionary from the previous frame
             -shape_code: the pre-estimated global shape code
         output:
@@ -233,20 +242,23 @@ class Tracker():
 
         # run face parsing
         parsing_mask = self.face_parser.run(img)
-        if realign:
-            parsing_mask_aligned = parsing_mask
-        else:
-            parsing_mask_aligned = self.face_parser.run(img_aligned)
+        if realign: parsing_mask_aligned = parsing_mask
+        else: parsing_mask_aligned = self.face_parser.run(img_aligned)
         
-        # run facial landmark-based fitting
-        ret_dict = self.run_fitting(img, deca_dict, prev_ret_dict, shape_code)
+        if photometric_fitting:
+            # run photometric fitting
+            face_mask = get_face_mask(parsing=parsing_mask, keep_ears=True)
+            ret_dict = self.run_fitting_photometric(img, face_mask, deca_dict, prev_ret_dict, shape_code)
+        else:
+            # run facial landmark-based fitting
+            ret_dict = self.run_fitting(img, deca_dict, prev_ret_dict, shape_code)
 
         # check for NaNs, if there is any, return None
         _, nan_status = check_nan_in_dict(ret_dict)
         if nan_status:
             return None
 
-        # add more
+        # add more data
         ret_dict['img'] = img
         ret_dict['img_aligned'] = img_aligned
         ret_dict['parsing'] = parsing_mask
@@ -260,7 +272,7 @@ class Tracker():
 
     def run_all_images(self, imgs : list, realign=True):
         """
-        Run FLAME tracking on all loaded images
+        Run FLAME tracking (landmark-based) on all loaded images
         input:
             -imgs: list of image data, [numpy] 
             -realign: for FFHQ, use False. for in-the-wild images, use True
@@ -299,10 +311,8 @@ class Tracker():
 
             # run face parsing
             parsing_mask = self.face_parser.run(img)
-            if realign:
-                parsing_mask_aligned = parsing_mask
-            else:
-                parsing_mask_aligned = self.face_parser.run(img_aligned)
+            if realign: parsing_mask_aligned = parsing_mask
+            else: parsing_mask_aligned = self.face_parser.run(img_aligned)
 
             ret_dict_all['img'].append(img)
             ret_dict_all['img_aligned'].append(img_aligned)
@@ -387,8 +397,10 @@ class Tracker():
 
     
     def run_fitting(self, img, deca_dict, prev_ret_dict, shape_code):
-        ## Stage 1: rigid fitting on the camera pose (6DoF)
-        ## Stage 2: fine-tune the expression parameters, the jaw pose (3DoF), and the eyes poses (3DoF + 3DoF)
+        """ Landmark-based Fitting        
+            - Stage 1: rigid fitting on the camera pose (6DoF) based on detected landmarks
+            - Stage 2: fine-tune the parameters including shape, tex, exp, pose, eye_pose, and light
+        """
 
         if prev_ret_dict is not None:
             continue_fit = True
@@ -500,15 +512,6 @@ class Tracker():
             loss.backward()
             e_opt_rigid.step()
 
-            # # for debugging only
-            # if iter % 100 == 0:
-            #     rendered_mesh_shape = rendered['rgba'][0,...,:3].detach().cpu().numpy()
-            #     temp = (img_resized / 255. + rendered_mesh_shape) / 2
-            #     temp = np.array(np.clip(temp * 255, 0, 255), dtype=np.uint8) # uint8
-            #     plt.imshow(temp)
-            #     plt.title(f'iter {iter} - loss {loss.item()}')
-            #     plt.show()
-
         # the optimized camera pose from the Stage 1
         optimized_camera_pose = camera_pose + torch.cat((d_camera_rotation, d_camera_translation))
         optimized_camera_pose = optimized_camera_pose.detach()
@@ -529,7 +532,6 @@ class Tracker():
         Rt = create_diff_world_to_view_matrix(optimized_camera_pose)
         cam = PerspectiveCamera(Rt=Rt, fov=self.fov, bg=self.bg_color, 
                                 image_width=self.W, image_height=self.H, znear=self.znear, zfar=self.zfar)
-
 
         ############################
         ## Stage 2: fine fitting   #
@@ -564,9 +566,9 @@ class Tracker():
 
             # update learning rate
             if iter == 100:
-                e_opt_fine.param_groups[0]['lr'] = 0.005    # For translation
-                e_opt_fine.param_groups[1]['lr'] = 0.01     # For rotation
-                e_opt_fine.param_groups[1]['lr'] = 0.01     # For rotation
+                e_opt_fine.param_groups[0]['lr'] = 0.005    
+                e_opt_fine.param_groups[1]['lr'] = 0.01     
+                e_opt_fine.param_groups[1]['lr'] = 0.01     
 
             optimized_exp = exp + d_exp
             optimized_pose = torch.from_numpy(params['pose']).to(self.device).detach()
@@ -595,7 +597,6 @@ class Tracker():
             loss.backward()
             e_opt_fine.step()
 
-
         ##############################
         ## for displaying results    #
         ##############################
@@ -609,15 +610,6 @@ class Tracker():
                                         pose_params=optimized_pose, 
                                         eye_pose_params=eye_pose)
 
-            # # render landmarks via NV diff renderer
-            # rendered = self.mesh_renderer.render_from_camera(vertices, self.mesh_faces, cam) # vertices should have the shape of [1, N, 3]
-            # verts_clip = rendered['verts_clip'] # [1, N, 3]
-            # verts_ndc_3d = verts_clip_to_ndc(verts_clip, image_size=self.H, out_dim=3) # convert the clipped vertices to NDC, output [N, 3]
-            # landmarks3d = self.flame.seletec_3d68(verts_ndc_3d[None]) # [1, 68, 3]
-            # landmarks2d = landmarks3d[:,:,:2] # [1, 68, 2]
-            # rendered_mesh_shape = rendered['rgba'][0,...,:3].detach().cpu().numpy()
-            # rendered_mesh_shape = (img_resized / 255. + rendered_mesh_shape) / 2
-            # rendered_mesh_shape = np.array(np.clip(rendered_mesh_shape * 255, 0, 255), dtype=np.uint8) # uint8
             # render landmarks via NV diff renderer
             new_mesh_renderer = NVDiffRenderer().to(self.device) # there seems to be a bug with the NVDiffRenderer, so I create this new
                                                                  # render everytime to render the image
@@ -635,17 +627,15 @@ class Tracker():
 
             # Draw 2D landmarks as green dots
             for coords in landmarks2d[0]:
-                coords = np.clip(coords, 0, self.H).astype(np.uint8)
+                coords = np.clip(coords, 0, self.H-1).astype(np.uint8)
                 #coords = np.clip((coords / 2 + 1) * self.H, 0, self.H).astype(np.uint8)
                 cv2.circle(rendered_mesh_shape, (coords[0], coords[1]), radius=1, color=(0, 255, 0), thickness=-1)  # Green color, filled circle
 
             # Optionally draw eye landmarks as red dots
             for coords in eyes_landmarks2d[0]:
-                coords = np.clip(coords, 0, self.H).astype(np.uint8)
+                coords = np.clip(coords, 0, self.H-1).astype(np.uint8)
                 #coords = np.clip((coords / 2 + 1) * self.H, 0, self.H).astype(np.uint8)
                 cv2.circle(rendered_mesh_shape, (coords[0], coords[1]), radius=1, color=(0, 0, 255), thickness=-1)  # Red color, filled circle
-
-
 
         ####################
         # Prepare results  #
@@ -658,6 +648,309 @@ class Tracker():
             'eye_pose': eye_pose.detach().cpu().numpy(),
             'tex': params['tex'],
             'light': params['light'],
+            'cam': optimized_camera_pose.detach().cpu().numpy(), # [6]
+            'img_rendered': rendered_mesh_shape_img,
+            'mesh_rendered': rendered_mesh_shape,
+        }
+        
+        return ret_dict
+
+
+    def run_fitting_photometric(self, img, face_mask, deca_dict, prev_ret_dict, shape_code):
+        """ Landmark and Photometric Fitting        
+            - Stage 1: rigid fitting on the camera pose (6DoF)
+            - Stage 2: fine-tune the expression parameters, the jaw pose (3DoF), and the eyes poses (3DoF + 3DoF)
+        """
+
+        if prev_ret_dict is not None:
+            continue_fit = True
+        else:
+            continue_fit = False
+
+        # convert the parameters to numpy arrays
+        params = {}
+        for key in ['shape', 'tex', 'exp', 'pose', 'light']:
+            if key == 'shape' and shape_code is not None:
+                # use pre-estimated global shape code
+                params[key] = shape_code.detach().cpu().numpy()
+            else:
+                params[key] = deca_dict[key].detach().cpu().numpy()
+
+        # resize for FLAME fitting
+        img_resized = cv2.resize(img, (self.flame_cfg.cropped_size, self.flame_cfg.cropped_size))
+        gt_img = torch.from_numpy(np.array(img_resized,dtype=np.float32) / 255.).detach().to(self.device) # [H,W,C] float32
+        gt_img = gt_img[None].permute(0,3,1,2) # [1,C,H,W]
+        face_mask_resized = cv2.resize(face_mask, (self.flame_cfg.cropped_size, self.flame_cfg.cropped_size)) # [H,W]
+        gt_face_mask = torch.from_numpy(face_mask_resized)[None].detach().to(self.device) # [1,H,W] boolean
+
+        # run Mediapipe face detector
+        lmks_dense, _ = self.mediapipe_face_detection(img_resized)
+        lmks_dense[:, :2] = lmks_dense[:, :2] / float(self.flame_cfg.cropped_size) * 2 - 1 # normalize landmarks
+        face_landmarks = convert_landmarks_mediapipe_to_dlib(lmks_mp=lmks_dense) # 68 dlib landmarks
+
+        # prepare target 68 landmarks
+        gt_landmark = np.array(face_landmarks).astype(np.float32)
+        gt_landmark = torch.from_numpy(gt_landmark[None]).float().to(self.device)
+
+        # prepare target eyes landmarks
+        gt_eyes_landmark = np.array(lmks_dense[self.R_EYE_MP_LMKS + self.L_EYE_MP_LMKS]).astype(np.float32)
+        gt_eyes_landmark = torch.from_numpy(gt_eyes_landmark[None]).float().to(self.device)
+
+        ############################################################
+        ## Stage 1: rigid fitting (estimate the 6DoF camera pose)  #
+        ############################################################
+
+        # prepare 6DoF camera pose tensor
+        if continue_fit == False:
+            camera_pose = torch.tensor([0, 0, 0, 0, 0, 1.0], dtype=torch.float32).to(self.device) # [yaw, pitch, roll, x, y, z]
+        else:
+            # use previous frame's estimation to initialize
+            camera_pose = torch.tensor(prev_ret_dict['cam'], dtype=torch.float32).to(self.device)
+
+        # prepare camera pose offsets (to be optimized)
+        d_camera_rotation = nn.Parameter(torch.zeros(3).float().to(self.device))
+        d_camera_translation = nn.Parameter(torch.zeros(3).float().to(self.device))
+        camera_params = [
+            {'params': [d_camera_translation], 'lr': 0.01}, {'params': [d_camera_rotation], 'lr': 0.05}
+        ]
+
+        # camera pose optimizer
+        e_opt_rigid = torch.optim.Adam(
+            camera_params,
+            weight_decay=0.0001
+        )
+        
+        # DECA's results
+        shape = torch.from_numpy(params['shape']).to(self.device).detach()
+        tex = torch.from_numpy(params['tex']).to(self.device).detach()
+        exp = torch.from_numpy(params['exp']).to(self.device).detach()
+        light = torch.from_numpy(params['light']).to(self.device).detach()
+        pose = torch.from_numpy(params['pose']).to(self.device).detach()
+        pose[0,:3] *= 0 # we clear FLAME's head pose (we use camera pose instead)
+
+        # optimization loop
+        if continue_fit:
+            # continue to fit on the next video frame
+            total_iterations = 200
+        else:
+            # initial fitting, take longer time
+            total_iterations = 500
+        for iter in range(total_iterations):
+
+            if continue_fit == False:
+                ## initial fitting
+                # update learning rate
+                if iter == 400:
+                    e_opt_rigid.param_groups[0]['lr'] = 0.005    # For translation
+                    e_opt_rigid.param_groups[1]['lr'] = 0.01     # For rotation
+                # update loss term weights
+                if iter <= 400: l_f = 100; l_c = 500 # more weights to contour
+                else: l_f = 500; l_c = 100 # more weights to face
+            else:
+                ## continue fitting
+                # update learning rate
+                e_opt_rigid.param_groups[0]['lr'] = 0.005    # For translation
+                e_opt_rigid.param_groups[1]['lr'] = 0.01     # For rotation
+                # update loss term weights
+                if iter <= 100: l_f = 100; l_c = 500 # more weights to contour
+                else: l_f = 500; l_c = 100 # more weights to face
+
+            vertices, _, _ = self.flame(shape_params=shape, expression_params=exp, pose_params=pose) # [1, N, 3]
+
+            # prep camera
+            optimized_camera_pose = camera_pose + torch.cat((d_camera_rotation, d_camera_translation))
+            Rt = create_diff_world_to_view_matrix(optimized_camera_pose)
+            cam = PerspectiveCamera(Rt=Rt, fov=self.fov, bg=self.bg_color, 
+                                    image_width=self.W, image_height=self.H, znear=self.znear, zfar=self.zfar)
+
+            # project landmarks via NV diff renderer
+            verts_clip = self.mesh_renderer.project_vertices_from_camera(vertices, cam)
+            verts_ndc_3d = verts_clip_to_ndc(verts_clip, image_size=self.H, out_dim=3) # convert the clipped vertices to NDC, output [N, 3]
+            landmarks3d = self.flame.seletec_3d68(verts_ndc_3d[None]) # [1, 68, 3]
+            landmarks2d = landmarks3d[:,:,:2] / float(self.flame_cfg.cropped_size) * 2 - 1  # [1, 68, 2]
+
+            # loss computation and optimization
+            loss_facial = util.l2_distance(landmarks2d[:, 17:, :2], gt_landmark[:, 17:, :2]) * l_f
+            loss_contour = util.l2_distance(landmarks2d[:, :17, :2], gt_landmark[:, :17, :2]) * l_c # contour loss
+            loss = loss_facial + loss_contour
+            e_opt_rigid.zero_grad()
+            loss.backward()
+            e_opt_rigid.step()
+
+        ############################
+        ## Stage 2: fine fitting   #
+        ############################
+
+        # prepare shape code offsets (to be optimized)
+        d_shape = torch.zeros(params['shape'].shape)
+        d_shape = nn.Parameter(d_shape.float().to(self.device))
+
+        # prepare texture code offsets (to be optimized)
+        d_tex = torch.zeros(params['tex'].shape)
+        d_tex = nn.Parameter(d_tex.float().to(self.device))
+
+        # prepare light code offsets (to be optimized)
+        d_light = torch.zeros([1,9,3])
+        d_light = nn.Parameter(d_light.float().to(self.device))
+
+        # prepare expression code offsets (to be optimized)
+        d_exp = torch.zeros(params['exp'].shape)
+        d_exp = nn.Parameter(d_exp.float().to(self.device))
+
+        # prepare jaw pose offsets (to be optimized)
+        d_jaw = torch.zeros(3)
+        d_jaw = nn.Parameter(d_jaw.float().to(self.device))    
+        
+        # prepare eyes poses offsets (to be optimized)
+        eye_pose = torch.zeros(1,6) # FLAME's default_eyeball_pose are zeros
+        eye_pose = nn.Parameter(eye_pose.float().to(self.device))    
+
+        finetune_params = [
+            {'params': [d_tex], 'lr': 0.005}, 
+            {'params': [d_light], 'lr': 0.002}, 
+            {'params': [d_exp], 'lr': 0.005}, 
+            {'params': [d_jaw], 'lr': 0.025},
+            {'params': [eye_pose], 'lr': 0.005},
+            {'params': [d_camera_translation], 'lr': 0.005}, 
+            {'params': [d_camera_rotation], 'lr': 0.005},
+        ]
+        if shape_code is None:
+            finetune_params.append({'params': [d_shape], 'lr': 0.005})
+
+        # fine optimizer
+        e_opt_fine = torch.optim.Adam(
+            finetune_params,
+            weight_decay=0.0001
+        )
+
+        # optimization loop
+        for iter in range(800):
+
+            # flame shape model
+            optimized_pose = torch.from_numpy(params['pose']).to(self.device).detach()
+            optimized_pose[0,:3] *= 0 # we clear FLAME's head pose 
+            optimized_pose[:,3:] = optimized_pose[:,3:] + d_jaw
+            vertices, _, _ = self.flame(shape_params=shape+d_shape, 
+                                        expression_params=exp+d_exp, 
+                                        pose_params=optimized_pose, 
+                                        eye_pose_params=eye_pose) # [1, N, 3]
+            
+            # flame texture model
+            texture = self.flametex(tex + d_tex) # [N, 3, 256, 256]
+
+            # prepare camera            
+            optimized_camera_pose = camera_pose + torch.cat((d_camera_rotation, d_camera_translation))
+            Rt = create_diff_world_to_view_matrix(optimized_camera_pose)
+            cam = PerspectiveCamera(Rt=Rt, fov=self.fov, bg=self.bg_color, 
+                                    image_width=self.W, image_height=self.H, znear=self.znear, zfar=self.zfar)
+
+            # project landmarks via NVdiffrast
+            verts_clip = self.mesh_renderer.project_vertices_from_camera(vertices, cam)
+            verts_ndc_3d = verts_clip_to_ndc(verts_clip, image_size=self.H, out_dim=3) # convert the clipped vertices to NDC, output [N, 3]
+            landmarks3d = self.flame.seletec_3d68(verts_ndc_3d[None]) # [1, 68, 3]
+            landmarks2d = landmarks3d[:,:,:2] / float(self.flame_cfg.cropped_size) * 2 - 1  # [1, 68, 2]
+
+            # eyes landmarks
+            eyes_landmarks3d = verts_ndc_3d[self.R_EYE_INDICES + self.L_EYE_INDICES][None]  # [1, 10, 3]
+            eyes_landmarks2d = eyes_landmarks3d[:,:,:2] / float(self.flame_cfg.cropped_size) * 2 - 1  # [1, 10, 2]
+
+            # render textured mesh (using PyTorch3D's renderer)
+            verts_transformed = verts_clip[...,:3]
+            verts_transformed = verts_transformed[..., :3] / (verts_clip[...,3:4] + 1e-8) # perspective projection
+            rendered_textured = self.flame_texture_render(vertices, verts_transformed, texture, light+d_light)
+            rendered_textured = rendered_textured['images'].flip(2) # [1,C,H,W]
+            rendered_textured = rendered_textured[:,:3,:,:] # [1,3,H,W] RGBA to RGB 
+
+            # loss computation and optimization
+            loss_photo = compute_batch_pixelwise_l1_loss(gt_img, rendered_textured, gt_face_mask) * 8  # photometric loss
+            loss_facial = util.l2_distance(landmarks2d[:, 17:, :2], gt_landmark[:, 17:, :2]) * 1
+            loss_contour = util.l2_distance(landmarks2d[:, :17, :2], gt_landmark[:, :17, :2]) * 0.2 # contour loss
+            loss_eyes = util.l2_distance(eyes_landmarks2d, gt_eyes_landmark) * 1
+            loss_reg_shape = (torch.sum((shape + d_shape) ** 2) / 2) * 1e-3
+            loss_reg_exp = (torch.sum((exp + d_exp) ** 2) / 2) * 1e-3
+            loss_reg_tex = (torch.sum((tex + d_tex) ** 2) / 2) * 1e-4
+            loss_reg = loss_reg_shape + loss_reg_exp + loss_reg_tex
+            loss = loss_photo + loss_facial + loss_contour + loss_eyes + loss_reg
+            # if iter % 50 == 0: 
+            #     print(loss_photo.item(), loss_facial.item(), loss_reg.item())
+            #     import matplotlib.pyplot as plt
+            #     plt.figure(figsize=(3,3))
+            #     temp = np.array(np.clip(rendered_textured.permute(0,2,3,1).detach().cpu().numpy()[0] * 255, 0, 255), dtype=np.uint8)
+            #     plt.imshow(temp); plt.axis('off')
+            #     plt.show()
+            e_opt_fine.zero_grad()
+            loss.backward()
+            e_opt_fine.step()
+
+        #####################
+        ## final results    #
+        #####################
+        with torch.no_grad():
+            optimized_pose = torch.from_numpy(params['pose']).to(self.device).detach()
+            optimized_pose[0,:3] *= 0 # we clear FLAME's head pose 
+            optimized_pose[:,3:] = optimized_pose[:,3:] + d_jaw # clear head pose and set jaw pose
+            vertices, _, _ = self.flame(shape_params=shape+d_shape, 
+                                        expression_params=exp+d_exp, 
+                                        pose_params=optimized_pose, 
+                                        eye_pose_params=eye_pose)
+
+            # flame texture model
+            texture = self.flametex(tex + d_tex) # [N, 3, 256, 256]
+            
+            # render via NVdiffrast
+            new_mesh_renderer = NVDiffRenderer().to(self.device) # there seems to be a bug with the NVDiffRenderer, so I create this new
+                                                                 # render everytime to render the image
+            rendered = new_mesh_renderer.render_from_camera(vertices, self.mesh_faces, cam) # vertices should have the shape of [1, N, 3]
+            verts_clip = rendered['verts_clip'] # [1, N, 3]
+            verts_ndc_3d = verts_clip_to_ndc(verts_clip, image_size=self.H, out_dim=3) # convert the clipped vertices to NDC, output [N, 3]
+            landmarks3d = self.flame.seletec_3d68(verts_ndc_3d[None]) # [1, 68, 3]
+            landmarks2d = landmarks3d[:,:,:2].detach().cpu().numpy() # [1, 68, 2]
+
+            # eyes landmarks
+            eyes_landmarks3d = verts_ndc_3d[self.R_EYE_INDICES + self.L_EYE_INDICES][None]  # [1, 10, 3]
+            eyes_landmarks2d = eyes_landmarks3d[:,:,:2].detach().cpu().numpy()  # [1, 10, 2]
+
+            # render textured mesh (using PyTorch3D's renderer)
+            verts_transformed = verts_clip[...,:3]
+            verts_transformed = verts_transformed[..., :3] / (verts_clip[...,3:4] + 1e-8) # perspective projection
+            rendered_textured = self.flame_texture_render(vertices, verts_transformed, texture, light+d_light)
+            rendered_textured = rendered_textured['images'].flip(2) # [1,C,H,W]
+            rendered_textured = rendered_textured[:,:3,:,:] # [1,3,H,W] RGBA to RGB 
+
+            # for visualization only
+            rendered_mesh_shape_no_texture = rendered['rgba'][0,...,:3].detach().cpu().numpy()
+            rendered_mesh_shape_img = (img_resized / 255. + rendered_mesh_shape_no_texture) / 2
+            rendered_mesh_shape = rendered_textured.permute(0,2,3,1).detach().cpu().numpy()[0] # [H,W,3]
+            #rendered_mesh_shape_img = 0.4 * (img_resized / 255.) + 0.6 * rendered_mesh_shape
+            rendered_mesh_shape_img = np.array(np.clip(rendered_mesh_shape_img * 255, 0, 255), dtype=np.uint8) # uint8
+            rendered_mesh_shape = np.array(np.clip(rendered_mesh_shape * 255, 0, 255), dtype=np.uint8) # uint8
+            rendered_mesh_shape_img = cv2.cvtColor(rendered_mesh_shape_img, cv2.COLOR_RGB2BGR) # convert to BGR to draw landmarks
+
+            # Draw 2D landmarks as green dots
+            for coords in landmarks2d[0]:
+                coords = np.clip(coords, 0, self.H-1).astype(np.uint8)
+                #coords = np.clip((coords / 2 + 1) * self.H, 0, self.H).astype(np.uint8)
+                cv2.circle(rendered_mesh_shape_img, (coords[0], coords[1]), radius=1, color=(0, 255, 0), thickness=-1)  # Green color, filled circle
+
+            # Optionally draw eye landmarks as red dots
+            for coords in eyes_landmarks2d[0]:
+                coords = np.clip(coords, 0, self.H-1).astype(np.uint8)
+                #coords = np.clip((coords / 2 + 1) * self.H, 0, self.H).astype(np.uint8)
+                cv2.circle(rendered_mesh_shape_img, (coords[0], coords[1]), radius=1, color=(255, 0, 0), thickness=-1)  # Blue color, filled circle
+                
+            rendered_mesh_shape_img = cv2.cvtColor(rendered_mesh_shape_img, cv2.COLOR_BGR2RGB) # convert back to RGB
+
+        ####################
+        # Prepare results  #
+        ####################
+        ret_dict = {
+            'vertices': vertices[0].detach().cpu().numpy(),  # [N, 3]
+            'shape': (shape + d_shape).detach().cpu().numpy(),
+            'exp': (exp + d_exp).detach().cpu().numpy(),
+            'pose': optimized_pose.detach().cpu().numpy(),
+            'eye_pose': eye_pose.detach().cpu().numpy(),
+            'tex': (tex + d_tex).detach().cpu().numpy(),
+            'light': (light + d_light).detach().cpu().numpy(),
             'cam': optimized_camera_pose.detach().cpu().numpy(), # [6]
             'img_rendered': rendered_mesh_shape_img,
             'mesh_rendered': rendered_mesh_shape,

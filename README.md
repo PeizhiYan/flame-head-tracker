@@ -3,8 +3,8 @@
 ## [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 - **Author**: Peizhi Yan
-- **Date Updated**: 10-31-2024
-- **Version**: 1.1
+- **Date Updated**: 11-19-2024
+- **Version**: 2.0
 
 ---
 
@@ -14,6 +14,9 @@
 (First two example videos were from IMavatar: https://github.com/zhengyuf/IMavatar )
 
 
+## Supported Features:
+- Mediapipe landmarks-based fitting (single-image or video)
+- Photometric fitting (single-image)
 
 
 ## Table of Contents
@@ -27,10 +30,10 @@
 ## 🟣 Todos
 - [x] Improve video tracking speed. (in v1.01)
 - [x] Add Kalman filter for temporal camera pose smoothing. (in v1.1)
-- [ ] Temporal smooth in the face alignment and cropping. (expected in v1.2)
-- [ ] Add ear landmarks detection module, and include ear landmarks during the fitting process. (expected in v2.0)
-- [ ] Add support for photometric fitting. (expected in v2.0)
-- [ ] Add support for multi-view fitting. (expected in v2.1)
+- [x] Add support for photometric fitting. (expected in v2.0)
+- [ ] Add ear landmarks detection module, and include ear landmarks during the fitting process. (expected in v2.1)
+- [ ] Temporal smooth in the face alignment and cropping. (expected in v2.2)
+- [ ] Add support for multi-view fitting. (expected in v2.3)
 
 
 ## 🟠 Citation
@@ -62,7 +65,7 @@ tracker_cfg = {
     'mediapipe_face_landmarker_v2_path': './models/face_landmarker_v2_with_blendshapes.task',
     'flame_model_path': './models/FLAME2020/generic_model.pkl',
     'flame_lmk_embedding_path': './models/landmark_embedding.npy',
-    'tex_space_path': './models/FLAME_texture.npz',
+    'tex_space_path': './models/FLAME_albedo_from_BFM.npz',
     'face_parsing_model_path': './utils/face_parsing/79999_iter.pth',
     'uv_coord_mapping_file_path': './models/uv2vert_256.npy',
     'template_mesh_file_path': './models/head_template.obj',
@@ -114,7 +117,7 @@ tracker_cfg = {
     'mediapipe_face_landmarker_v2_path': './models/face_landmarker_v2_with_blendshapes.task',
     'flame_model_path': './models/FLAME2020/generic_model.pkl',
     'flame_lmk_embedding_path': './models/landmark_embedding.npy',
-    'tex_space_path': './models/FLAME_texture.npz',
+    'tex_space_path': './models/FLAME_albedo_from_BFM.npz',
     'face_parsing_model_path': './utils/face_parsing/79999_iter.pth',
     'uv_coord_mapping_file_path': './models/uv2vert_256.npy',
     'template_mesh_file_path': './models/head_template.obj',
@@ -254,7 +257,7 @@ Because of copyright concerns, we cannot re-share any of the following model fil
 #### FLAME and DECA
 
 - Download ```FLAME 2020 (fixed mouth, improved expressions, more data)``` from https://flame.is.tue.mpg.de/ and extract to ```./models/FLAME2020```
-- Download the files from: https://github.com/yfeng95/DECA/tree/master/data, and place at ```./models/
+- Download the files from: https://github.com/yfeng95/DECA/tree/master/data, and place at ```./models/```
 - Follow https://github.com/TimoBolkart/BFM_to_FLAME to generate the ```FLAME_albedo_from_BFM.npz``` file and place at ```./models/```
 - Download ```deca_model.tar``` from https://docs.google.com/uc?export=download&id=1rp8kdyLPvErw2dTmqtjISRVvQLj6Yzje, and place at ```./models/```
 
@@ -276,7 +279,6 @@ The final structure of ```./models/``` is:
     │   ├── male_model.pkl
     │   └── Readme.pdf
     ├── FLAME_albedo_from_BFM.npz
-    ├── FLAME_texture.npz
     ├── head_template.obj
     ├── landmark_embedding.npy
     ├── mean_texture.jpg
@@ -306,6 +308,7 @@ Our code is mainly based on the following repositories:
 - Nvdiffrast: https://github.com/NVlabs/nvdiffrast
 - Pytorch3D: https://github.com/facebookresearch/pytorch3d
 - DECA: https://github.com/yfeng95/DECA
+- FLAME Photometric Fitting: https://github.com/HavenFeng/photometric_optimization
 - 3D Gaussian Splatting: https://github.com/graphdeco-inria/gaussian-splatting
 - GaussianAvatars: https://shenhanqian.github.io/gaussian-avatars
 - FaceParsing: https://github.com/zllrunning/face-parsing.PyTorch
@@ -314,5 +317,5 @@ We want to acknowledge the contributions of the authors of these repositories. W
 
 **Disclaimer**
 
-Our code can be used for both research and commercial purposes, **provided that the terms of the licenses of any third-party code or dependencies are followed**. We do not assume any responsibility for any issues, damages, or liabilities that may arise from the use of this code. Users are responsible for ensuring compliance with any legal requirements, including licensing terms and conditions, and for verifying that the code is suitable for their intended purposes.
+Our code can be used for research purposes, **provided that the terms of the licenses of any third-party code, models, or dependencies are followed**. For commercial use, the parts of code we wrote are for free, but please be aware to get permissions from any third-party to use their code, models, or dependencies. We do not assume any responsibility for any issues, damages, or liabilities that may arise from the use of this code. Users are responsible for ensuring compliance with any legal requirements, including licensing terms and conditions, and for verifying that the code is suitable for their intended purposes.
 
