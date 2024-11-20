@@ -1,22 +1,31 @@
-# FLAME Head Tracker
+<h1 align="center"><b>FLAME Head Tracker</b></h1>
 
-## [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+<div align="center"> 
+  <a href="https://opensource.org/licenses/MIT">
+    <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT">
+  </a>
+</div>
 
-- **Author**: Peizhi Yan
-- **Date Updated**: 11-19-2024
-- **Version**: 2.0
+<div align="center"> 
+  <b><img src="./assets/demo.gif" alt="drawing" width="600"/></b>
+  <br>
+  (First two example videos were from IMavatar: <a href="https://github.com/zhengyuf/IMavatar">https://github.com/zhengyuf/IMavatar</a>)
+</div>
+
+- **Author**: Peizhi Yan  
+- **Date Updated**: 11-19-2024  
+- **Version**: 2.0  
+
+## Supported Features:
+- Mediapipe Landmarks-based Fitting (single-image reconstruction or video tracking)
+- Photometric Fitting (single-image reconstruction)
+
+
 
 ---
 
-<div style="text-align: center;">
-    <img src="./assets/demo.gif">    
-</div>
-(First two example videos were from IMavatar: https://github.com/zhengyuf/IMavatar )
 
 
-## Supported Features:
-- Mediapipe landmarks-based fitting (single-image or video)
-- Photometric fitting (single-image)
 
 
 ## Table of Contents
@@ -27,13 +36,27 @@
 - 🔵 [Acknowledgements and Disclaimer](#-acknowledgements-and-disclaimer)
 
 
+
+
+
+
 ## 🟣 Todos
-- [x] Improve video tracking speed. (in v1.01)
-- [x] Add Kalman filter for temporal camera pose smoothing. (in v1.1)
-- [x] Add support for photometric fitting. (expected in v2.0)
-- [ ] Add ear landmarks detection module, and include ear landmarks during the fitting process. (expected in v2.1)
-- [ ] Temporal smooth in the face alignment and cropping. (expected in v2.2)
-- [ ] Add support for multi-view fitting. (expected in v2.3)
+<details>
+  <summary><b>Todo List</b></summary>
+
+- [x] Improve video tracking speed. (in v1.01)  
+- [x] Add Kalman filter for temporal camera pose smoothing. (in v1.1)  
+- [x] Add support for photometric fitting. (expected in v2.0)  
+- [ ] Add ear landmarks detection module, and include ear landmarks during the fitting process. (expected in v2.1)  
+- [ ] Temporal smooth in the face alignment and cropping. (expected in v2.2)  
+- [ ] Add support for multi-view fitting. (expected in v2.3)  
+
+</details>
+
+
+
+
+
 
 
 ## 🟠 Citation
@@ -49,101 +72,121 @@ This code was originally used for "Gaussian Deja-vu" (accepted for WACV 2025 in 
 ```
 
 
+
+
+
+
+
+
 ## 🟢 Usage
 
 [Return to top](#flame-head-tracker)
 
+<details>
+  <summary><b>Single-Image-Based Reconstruction</b></summary>
 
-### Single Image-based Reconstruction
+    Please follow the example in: ```./Example_single-image-reconstruction.ipynb```
 
-Please follow the example in: ```./Example_single-image-reconstruction.ipynb```
+    ```python
+    from tracker_base import Tracker
 
-```python
-from tracker_base import Tracker
+    tracker_cfg = {
+        'mediapipe_face_landmarker_v2_path': './models/face_landmarker_v2_with_blendshapes.task',
+        'flame_model_path': './models/FLAME2020/generic_model.pkl',
+        'flame_lmk_embedding_path': './models/landmark_embedding.npy',
+        'tex_space_path': './models/FLAME_albedo_from_BFM.npz',
+        'face_parsing_model_path': './utils/face_parsing/79999_iter.pth',
+        'uv_coord_mapping_file_path': './models/uv2vert_256.npy',
+        'template_mesh_file_path': './models/head_template.obj',
+        'result_img_size': 512,
+        'device': device,
+    }
 
-tracker_cfg = {
-    'mediapipe_face_landmarker_v2_path': './models/face_landmarker_v2_with_blendshapes.task',
-    'flame_model_path': './models/FLAME2020/generic_model.pkl',
-    'flame_lmk_embedding_path': './models/landmark_embedding.npy',
-    'tex_space_path': './models/FLAME_albedo_from_BFM.npz',
-    'face_parsing_model_path': './utils/face_parsing/79999_iter.pth',
-    'uv_coord_mapping_file_path': './models/uv2vert_256.npy',
-    'template_mesh_file_path': './models/head_template.obj',
-    'result_img_size': 512,
-    'device': device,
-}
+    tracker = Tracker(tracker_cfg)
 
-tracker = Tracker(tracker_cfg)
+    ret_dict = tracker.load_image_and_run(img_path, realign=True)
+    ```
 
-ret_dict = tracker.load_image_and_run(img_path, realign=True)
-```
+    The result ```ret_dict``` contains the following data:
+    - vertices (5023, 3) : the reconstructed FLAME mesh vertices (including expression)
+    - shape (1, 100) : the FLAME shape code
+    - exp (1, 50) : the FLAME expression code
+    - pose (1, 6) : the FLAME head (first 3 values) and jaw (last 3 values) poses
+    - eye_pose (1, 6) : the FLAME eyeball poses
+    - tex (1, 50) : the FLAME parametric texture code
+    - light (1, 9, 3) : the estimated SH lighting coefficients
+    - cam (6,) : the estimated 6DoF camera pose (yaw, pitch, roll, x, y, z)
+    - img_rendered : rendered shape on top of original image, for visualization purpose only
+    - mesh_rendered : rendered mesh shape with landmarks, for visualization purpose only
+    - img (512, 512, 3) : the image on which we fit the FLAME model on
+    - img_aligned (512, 512, 3) : the aligned image
+    - parsing (512, 512, 3) : the face semantic parsing result of img   
+    - parsing_aligned (512, 512, 3) : the face semantic parsing result of img_aligned
+    - lmks_dense (478, 2) : the 478 dense face landmarks from Mediapipe
+    - lmks_68 (68, 2) : the 68 Dlib format face landmarks
+    - blendshape_scores (52,) : the facial expression blendshape scores from Mediapipe
 
-The result ```ret_dict``` contains the following data:
-- vertices (5023, 3) : the reconstructed FLAME mesh vertices (including expression)
-- shape (1, 100) : the FLAME shape code
-- exp (1, 50) : the FLAME expression code
-- pose (1, 6) : the FLAME head (first 3 values) and jaw (last 3 values) poses
-- eye_pose (1, 6) : the FLAME eyeball poses
-- tex (1, 50) : the FLAME parametric texture code
-- light (1, 9, 3) : the estimated SH lighting coefficients
-- cam (6,) : the estimated 6DoF camera pose (yaw, pitch, roll, x, y, z)
-- img_rendered : rendered shape on top of original image, for visualization purpose only
-- mesh_rendered : rendered mesh shape with landmarks, for visualization purpose only
-- img (512, 512, 3) : the image on which we fit the FLAME model on
-- img_aligned (512, 512, 3) : the aligned image
-- parsing (512, 512, 3) : the face semantic parsing result of img   
-- parsing_aligned (512, 512, 3) : the face semantic parsing result of img_aligned
-- lmks_dense (478, 2) : the 478 dense face landmarks from Mediapipe
-- lmks_68 (68, 2) : the 68 Dlib format face landmarks
-- blendshape_scores (52,) : the facial expression blendshape scores from Mediapipe
+    **Example Reconstruction Result (realign=True)**:
 
-**Example Reconstruction Result (realign=True)**:
+    ![](./assets/single_image_fitting_1.png)
 
-![](./assets/single_image_fitting_1.png)
+    **Example Reconstruction Result (realign=False)**:
 
-**Example Reconstruction Result (realign=False)**:
+    ![](./assets/single_image_fitting_2.png)
 
-![](./assets/single_image_fitting_2.png)
+</details>
 
 
-### Video Tracking
+<details>
+  <summary><b>Monocular Video-Based Tracking</b></summary>
 
-Please follow the example in: ```./Example_video-reconstruction.ipynb```
+    Please follow the example in: ```./Example_video-reconstruction.ipynb```
 
-```python
-from tracker_video import track_video
+    ```python
+    from tracker_video import track_video
 
-tracker_cfg = {
-    'mediapipe_face_landmarker_v2_path': './models/face_landmarker_v2_with_blendshapes.task',
-    'flame_model_path': './models/FLAME2020/generic_model.pkl',
-    'flame_lmk_embedding_path': './models/landmark_embedding.npy',
-    'tex_space_path': './models/FLAME_albedo_from_BFM.npz',
-    'face_parsing_model_path': './utils/face_parsing/79999_iter.pth',
-    'uv_coord_mapping_file_path': './models/uv2vert_256.npy',
-    'template_mesh_file_path': './models/head_template.obj',
-    'result_img_size': 512,
-    'device': device,
-    ## following are used for video tracking
-    'original_fps': 60,       # input video fps
-    'subsample_fps': 30,      # subsample fps
-    'video_path': './assets/IMG_2647.MOV',  # example video
-    'save_path': './output',  # tracking result save path
-    'use_kalman_filter': False, # whether to use Kalman filter
-    'kalman_filter_measurement_noise_factor': 1e-5, # measurement noise level in Kalman filter 
-    'kalman_filter_process_noise_factor': 1e-5,     # process noise level in Kalman filter 
-}
+    tracker_cfg = {
+        'mediapipe_face_landmarker_v2_path': './models/face_landmarker_v2_with_blendshapes.task',
+        'flame_model_path': './models/FLAME2020/generic_model.pkl',
+        'flame_lmk_embedding_path': './models/landmark_embedding.npy',
+        'tex_space_path': './models/FLAME_albedo_from_BFM.npz',
+        'face_parsing_model_path': './utils/face_parsing/79999_iter.pth',
+        'uv_coord_mapping_file_path': './models/uv2vert_256.npy',
+        'template_mesh_file_path': './models/head_template.obj',
+        'result_img_size': 512,
+        'device': device,
+        ## following are used for video tracking
+        'original_fps': 60,       # input video fps
+        'subsample_fps': 30,      # subsample fps
+        'video_path': './assets/IMG_2647.MOV',  # example video
+        'save_path': './output',  # tracking result save path
+        'use_kalman_filter': False, # whether to use Kalman filter
+        'kalman_filter_measurement_noise_factor': 1e-5, # measurement noise level in Kalman filter 
+        'kalman_filter_process_noise_factor': 1e-5,     # process noise level in Kalman filter 
+    }
 
-## Note that, the first frame will take longer time to process
-track_video(tracker_cfg)
-```
+    ## Note that, the first frame will take longer time to process
+    track_video(tracker_cfg)
+    ```
 
-The results will be saved to the ```save_path```. The reconstruction result of each frame will be saved to the corresponding ```[frame_id].npy``` file. 
+    The results will be saved to the ```save_path```. The reconstruction result of each frame will be saved to the corresponding ```[frame_id].npy``` file. 
+
+</details>
+
+
+
+
+
+
 
 
 
 ## 🟡 Environment Setup
 
 [Return to top](#flame-head-tracker)
+
+<details>
+  <summary><b>Details</b></summary>
 
 ### Prerequisites:
 
@@ -287,6 +330,10 @@ The final structure of ```./models/``` is:
     ├── uv_face_eye_mask.png
     └── uv_face_mask.png
 ```
+
+</details>
+
+
 
 
 
