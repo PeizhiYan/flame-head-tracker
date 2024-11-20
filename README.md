@@ -13,12 +13,12 @@
 </div>
 
 - **Author**: Peizhi Yan  
-- **Date Updated**: 11-19-2024  
+- **Date Updated**: 11-20-2024  
 - **Version**: 2.0  
 
 ## Supported Features:
-- Mediapipe Landmarks-based Fitting (single-image reconstruction or video tracking)
-- Photometric Fitting (single-image reconstruction)
+- Mediapipe Landmarks-based Fitting (📷single-image reconstruction or 🎥video tracking)
+- Photometric Fitting (📷single-image reconstruction)
 
 
 
@@ -85,54 +85,73 @@ This code was originally used for "Gaussian Deja-vu" (accepted for WACV 2025 in 
 <details>
   <summary><b>Single-Image-Based Reconstruction</b></summary>
 
-    Please follow the example in: ```./Example_single-image-reconstruction.ipynb```
+Please follow the example in: ```./Example_single-image-reconstruction.ipynb```
 
-    ```python
-    from tracker_base import Tracker
+```python
+from tracker_base import Tracker
 
-    tracker_cfg = {
-        'mediapipe_face_landmarker_v2_path': './models/face_landmarker_v2_with_blendshapes.task',
-        'flame_model_path': './models/FLAME2020/generic_model.pkl',
-        'flame_lmk_embedding_path': './models/landmark_embedding.npy',
-        'tex_space_path': './models/FLAME_albedo_from_BFM.npz',
-        'face_parsing_model_path': './utils/face_parsing/79999_iter.pth',
-        'uv_coord_mapping_file_path': './models/uv2vert_256.npy',
-        'template_mesh_file_path': './models/head_template.obj',
-        'result_img_size': 512,
-        'device': device,
-    }
+tracker_cfg = {
+    'mediapipe_face_landmarker_v2_path': './models/face_landmarker_v2_with_blendshapes.task',
+    'flame_model_path': './models/FLAME2020/generic_model.pkl',
+    'flame_lmk_embedding_path': './models/landmark_embedding.npy',
+    'tex_space_path': './models/FLAME_albedo_from_BFM.npz',
+    'face_parsing_model_path': './utils/face_parsing/79999_iter.pth',
+    'uv_coord_mapping_file_path': './models/uv2vert_256.npy',
+    'template_mesh_file_path': './models/head_template.obj',
+    'result_img_size': 512,
+    'device': device,
+}
 
-    tracker = Tracker(tracker_cfg)
+tracker = Tracker(tracker_cfg)
 
-    ret_dict = tracker.load_image_and_run(img_path, realign=True)
-    ```
+ret_dict = tracker.load_image_and_run(img_path, realign=True, photometric_fitting=False)
+```
 
-    The result ```ret_dict``` contains the following data:
-    - vertices (5023, 3) : the reconstructed FLAME mesh vertices (including expression)
-    - shape (1, 100) : the FLAME shape code
-    - exp (1, 50) : the FLAME expression code
-    - pose (1, 6) : the FLAME head (first 3 values) and jaw (last 3 values) poses
-    - eye_pose (1, 6) : the FLAME eyeball poses
-    - tex (1, 50) : the FLAME parametric texture code
-    - light (1, 9, 3) : the estimated SH lighting coefficients
-    - cam (6,) : the estimated 6DoF camera pose (yaw, pitch, roll, x, y, z)
-    - img_rendered : rendered shape on top of original image, for visualization purpose only
-    - mesh_rendered : rendered mesh shape with landmarks, for visualization purpose only
-    - img (512, 512, 3) : the image on which we fit the FLAME model on
-    - img_aligned (512, 512, 3) : the aligned image
-    - parsing (512, 512, 3) : the face semantic parsing result of img   
-    - parsing_aligned (512, 512, 3) : the face semantic parsing result of img_aligned
-    - lmks_dense (478, 2) : the 478 dense face landmarks from Mediapipe
-    - lmks_68 (68, 2) : the 68 Dlib format face landmarks
-    - blendshape_scores (52,) : the facial expression blendshape scores from Mediapipe
+The result ```ret_dict``` contains the following data:
 
-    **Example Reconstruction Result (realign=True)**:
+- **vertices** `(5023, 3)`  
+  The reconstructed FLAME mesh vertices (including expression).  
+- **shape** `(1, 100)`  
+  The FLAME shape code.  
+- **exp** `(1, 50)`  
+  The FLAME expression code.  
+- **pose** `(1, 6)`  
+  The FLAME head (first 3 values) and jaw (last 3 values) poses.  
+- **eye_pose** `(1, 6)`  
+  The FLAME eyeball poses.  
+- **tex** `(1, 50)`  
+  The FLAME parametric texture code.  
+- **light** `(1, 9, 3)`  
+  The estimated SH lighting coefficients.  
+- **cam** `(6,)`  
+  The estimated 6DoF camera pose (yaw, pitch, roll, x, y, z).  
+- **img_rendered** `(256, 256, 3)`  
+  Rendered shape on top of the original image (for visualization purposes only).  
+- **mesh_rendered** `(256, 256, 3)`  
+  Rendered mesh shape with landmarks (for visualization purposes only).  
+- **img** `(512, 512, 3)`  
+  The image on which the FLAME model was fit.  
+- **img_aligned** `(512, 512, 3)`  
+  The aligned image.  
+- **parsing** `(512, 512, 3)`  
+  The face semantic parsing result of `img`.  
+- **parsing_aligned** `(512, 512, 3)`  
+  The face semantic parsing result of `img_aligned`.  
+- **lmks_dense** `(478, 2)`  
+  The 478 dense face landmarks from Mediapipe.  
+- **lmks_68** `(68, 2)`  
+  The 68 Dlib format face landmarks.  
+- **blendshape_scores** `(52,)`  
+  The facial expression blendshape scores from Mediapipe. 
 
-    ![](./assets/single_image_fitting_1.png)
 
-    **Example Reconstruction Result (realign=False)**:
+### Example Reconstruction Result (realign=True):
 
-    ![](./assets/single_image_fitting_2.png)
+![](./assets/single_image_fitting_1.png)
+
+### Example Reconstruction Result (realign=False):
+
+![](./assets/single_image_fitting_2.png)
 
 </details>
 
@@ -140,36 +159,36 @@ This code was originally used for "Gaussian Deja-vu" (accepted for WACV 2025 in 
 <details>
   <summary><b>Monocular Video-Based Tracking</b></summary>
 
-    Please follow the example in: ```./Example_video-reconstruction.ipynb```
+Please follow the example in: ```./Example_video-reconstruction.ipynb```
 
-    ```python
-    from tracker_video import track_video
+```python
+from tracker_video import track_video
 
-    tracker_cfg = {
-        'mediapipe_face_landmarker_v2_path': './models/face_landmarker_v2_with_blendshapes.task',
-        'flame_model_path': './models/FLAME2020/generic_model.pkl',
-        'flame_lmk_embedding_path': './models/landmark_embedding.npy',
-        'tex_space_path': './models/FLAME_albedo_from_BFM.npz',
-        'face_parsing_model_path': './utils/face_parsing/79999_iter.pth',
-        'uv_coord_mapping_file_path': './models/uv2vert_256.npy',
-        'template_mesh_file_path': './models/head_template.obj',
-        'result_img_size': 512,
-        'device': device,
-        ## following are used for video tracking
-        'original_fps': 60,       # input video fps
-        'subsample_fps': 30,      # subsample fps
-        'video_path': './assets/IMG_2647.MOV',  # example video
-        'save_path': './output',  # tracking result save path
-        'use_kalman_filter': False, # whether to use Kalman filter
-        'kalman_filter_measurement_noise_factor': 1e-5, # measurement noise level in Kalman filter 
-        'kalman_filter_process_noise_factor': 1e-5,     # process noise level in Kalman filter 
-    }
+tracker_cfg = {
+    'mediapipe_face_landmarker_v2_path': './models/face_landmarker_v2_with_blendshapes.task',
+    'flame_model_path': './models/FLAME2020/generic_model.pkl',
+    'flame_lmk_embedding_path': './models/landmark_embedding.npy',
+    'tex_space_path': './models/FLAME_albedo_from_BFM.npz',
+    'face_parsing_model_path': './utils/face_parsing/79999_iter.pth',
+    'uv_coord_mapping_file_path': './models/uv2vert_256.npy',
+    'template_mesh_file_path': './models/head_template.obj',
+    'result_img_size': 512,
+    'device': device,
+    ## following are used for video tracking
+    'original_fps': 60,       # input video fps
+    'subsample_fps': 30,      # subsample fps
+    'video_path': './assets/IMG_2647.MOV',  # example video
+    'save_path': './output',  # tracking result save path
+    'use_kalman_filter': False, # whether to use Kalman filter
+    'kalman_filter_measurement_noise_factor': 1e-5, # measurement noise level in Kalman filter 
+    'kalman_filter_process_noise_factor': 1e-5,     # process noise level in Kalman filter 
+}
 
-    ## Note that, the first frame will take longer time to process
-    track_video(tracker_cfg)
-    ```
+## Note that, the first frame will take longer time to process
+track_video(tracker_cfg)
+```
 
-    The results will be saved to the ```save_path```. The reconstruction result of each frame will be saved to the corresponding ```[frame_id].npy``` file. 
+The results will be saved to the ```save_path```. The reconstruction result of each frame will be saved to the corresponding ```[frame_id].npy``` file. 
 
 </details>
 
