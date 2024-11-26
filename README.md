@@ -37,8 +37,8 @@
 - 📃 [Todos](#-todos)
 - 🧸 [Citation](#-citation)
 - 🦖 [Usage](#-usage)
-- 🖥️ [Environment Setup](#-environment-setup)
-- ⚖️ [Acknowledgements and Disclaimer](#-acknowledgements-and-disclaimer)
+- 🖥️ [Environment Setup](#-environment)
+- ⚖️ [Acknowledgements and Disclaimer](#-disclaimer)
 
 
 
@@ -86,7 +86,6 @@ This code was originally used for "Gaussian Deja-vu" (accepted for WACV 2025 in 
 
 ## 🦖 Usage
 
-[Return to top](#flame-head-tracker)
 
 <details>
   <summary><b>📷Single-Image-Based Reconstruction📷</b></summary>
@@ -206,9 +205,8 @@ The results will be saved to the ```save_path```. The reconstruction result of e
 
 
 
-## 🖥️ Environment Setup {#environment-setup}
+## 🖥️ Environment
 
-[Return to top](#flame-head-tracker)
 
 <details>
   <summary><b>Details</b></summary>
@@ -370,9 +368,7 @@ The final structure of ```./models/``` is:
 
 
 
-## ⚖️ Acknowledgements and Disclaimer {#acknowledgements-and-disclaimer}
-
-[Return to top](#flame-head-tracker)
+## ⚖️ Disclaimer
 
 Our code is mainly based on the following repositories:
 
