@@ -37,7 +37,7 @@
 - 📃 [Todos](#-todos)
 - 🧸 [Citation](#-citation)
 - 🦖 [Usage](#-usage)
-- 🖥️ [Environment Setup](#-environment-setup)
+- 🖥️ [Environment Setup](#-environment setup)
 - ⚖️ [Acknowledgements and Disclaimer](#-acknowledgements-and-disclaimer)
 
 
