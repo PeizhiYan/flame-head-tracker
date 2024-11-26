@@ -367,6 +367,7 @@ Our code is mainly based on the following repositories:
 - 3D Gaussian Splatting: https://github.com/graphdeco-inria/gaussian-splatting
 - GaussianAvatars: https://shenhanqian.github.io/gaussian-avatars
 - FaceParsing: https://github.com/zllrunning/face-parsing.PyTorch
+- Dlib2Mediapipe: https://github.com/PeizhiYan/Mediapipe_2_Dlib_Landmarks
 
 We want to acknowledge the contributions of the authors of these repositories. We do not claim ownership of any code originating from these repositories, and any modifications we have made are solely for our specific use case. All original rights and attributions remain with the respective authors.
 
