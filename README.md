@@ -89,7 +89,7 @@ This code was originally used for "Gaussian Deja-vu" (accepted for WACV 2025 in 
 [Return to top](#flame-head-tracker)
 
 <details>
-  <summary><b>Single-Image-Based Reconstruction</b></summary>
+  <summary><b>📷Single-Image-Based Reconstruction📷</b></summary>
 
 Please follow the example in: ```./Example_single-image-reconstruction.ipynb```
 
@@ -163,7 +163,7 @@ The result ```ret_dict``` contains the following data:
 
 
 <details>
-  <summary><b>Monocular Video-Based Tracking</b></summary>
+  <summary><b>🎥Monocular Video-Based Tracking🎥</b></summary>
 
 Please follow the example in: ```./Example_video-reconstruction.ipynb```
 
@@ -206,7 +206,7 @@ The results will be saved to the ```save_path```. The reconstruction result of e
 
 
 
-## 🖥️ Environment Setup
+## 🖥️ Environment-Setup
 
 [Return to top](#flame-head-tracker)
 
@@ -370,7 +370,7 @@ The final structure of ```./models/``` is:
 
 
 
-## ⚖️ Acknowledgements and Disclaimer
+## ⚖️ Acknowledgements-and-Disclaimer
 
 [Return to top](#flame-head-tracker)
 
