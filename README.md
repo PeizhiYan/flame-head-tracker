@@ -32,19 +32,6 @@
 
 
 
-
-## 📖Table of Contents
-- 📃 [Todos](#-todos)
-- 🧸 [Citation](#-citation)
-- 🦖 [Usage](#-usage)
-- 🖥️ [Environment Setup](#-environment)
-- ⚖️ [Acknowledgements and Disclaimer](#-disclaimer)
-
-
-
-
-
-
 ## 📃 Todos
 <details>
   <summary><b>Todo List</b></summary>
