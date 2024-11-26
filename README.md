@@ -37,7 +37,7 @@
 - 📃 [Todos](#-todos)
 - 🧸 [Citation](#-citation)
 - 🦖 [Usage](#-usage)
-- 🖥️ [Environment Setup](#-environment setup)
+- 🖥️ [Environment Setup](#-environment-setup)
 - ⚖️ [Acknowledgements and Disclaimer](#-acknowledgements-and-disclaimer)
 
 
@@ -206,7 +206,7 @@ The results will be saved to the ```save_path```. The reconstruction result of e
 
 
 
-## 🖥️ Environment-Setup
+## 🖥️ Environment Setup {#environment-setup}
 
 [Return to top](#flame-head-tracker)
 
@@ -370,7 +370,7 @@ The final structure of ```./models/``` is:
 
 
 
-## ⚖️ Acknowledgements-and-Disclaimer
+## ⚖️ Acknowledgements and Disclaimer {#acknowledgements-and-disclaimer}
 
 [Return to top](#flame-head-tracker)
 
