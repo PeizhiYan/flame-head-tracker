@@ -12,40 +12,21 @@
   (First two example videos were from IMavatar: <a href="https://github.com/zhengyuf/IMavatar">https://github.com/zhengyuf/IMavatar</a>)
 </div>
 
-**Author**: Peizhi Yan  
-**Date Updated**: 11-20-2024  
+**Date Updated**: 11-25-2024  
 **Version**: 2.0
 
 
 ## Supported Features:
 - **Landmarks-based Fitting** 
-  - 🙂Mediapipe face landmarks
-  - 📷single-image reconstruction
-  - 🎥monocular video tracking
+  - 🙂 Mediapipe face landmarks
+  - 📷 single-image reconstruction
+  - 🎥 monocular video tracking
 - **Photometric Fitting**
-  - 📷single-image reconstruction
+  - 📷 single-image reconstruction
 
 
 
 ---
-
-
-
-
-## 📃 Todos
-<details>
-  <summary><b>Todo List</b></summary>
-
-- [x] Improve video tracking speed. (in v1.01)  
-- [x] Add Kalman filter for temporal camera pose smoothing. (in v1.1)  
-- [x] Add support for photometric fitting. (expected in v2.0)  
-- [ ] Add ear landmarks detection module, and include ear landmarks during the fitting process. (expected in v2.1)  
-- [ ] Temporal smooth in the face alignment and cropping. (expected in v2.2)  
-- [ ] Add support for multi-view fitting. (expected in v2.3)  
-
-</details>
-
-
 
 
 
@@ -75,7 +56,7 @@ This code was originally used for "Gaussian Deja-vu" (accepted for WACV 2025 in 
 
 
 <details>
-  <summary><b>📷Single-Image-Based Reconstruction📷</b></summary>
+  <summary><b>📷 Single-Image-Based Reconstruction 📷</b></summary>
 
 Please follow the example in: ```./Example_single-image-reconstruction.ipynb```
 
@@ -149,7 +130,7 @@ The result ```ret_dict``` contains the following data:
 
 
 <details>
-  <summary><b>🎥Monocular Video-Based Tracking🎥</b></summary>
+  <summary><b>🎥 Monocular Video-Based Tracking 🎥</b></summary>
 
 Please follow the example in: ```./Example_video-reconstruction.ipynb```
 
@@ -192,7 +173,10 @@ The results will be saved to the ```save_path```. The reconstruction result of e
 
 
 
-## 🖥️ Environment
+
+
+
+## 🖥️ Environment Setup
 
 
 <details>
@@ -355,7 +339,9 @@ The final structure of ```./models/``` is:
 
 
 
-## ⚖️ Disclaimer
+## ⚖️ Acknowledgement and Disclaimer
+
+### Acknowledgement
 
 Our code is mainly based on the following repositories:
 
@@ -371,7 +357,27 @@ Our code is mainly based on the following repositories:
 
 We want to acknowledge the contributions of the authors of these repositories. We do not claim ownership of any code originating from these repositories, and any modifications we have made are solely for our specific use case. All original rights and attributions remain with the respective authors.
 
-**Disclaimer**
+### Disclaimer
 
 Our code can be used for research purposes, **provided that the terms of the licenses of any third-party code, models, or dependencies are followed**. For commercial use, the parts of code we wrote are for free, but please be aware to get permissions from any third-party to use their code, models, or dependencies. We do not assume any responsibility for any issues, damages, or liabilities that may arise from the use of this code. Users are responsible for ensuring compliance with any legal requirements, including licensing terms and conditions, and for verifying that the code is suitable for their intended purposes.
+
+
+
+
+
+## 📃 Todos
+<details>
+  <summary><b>Todo List</b></summary>
+
+- [x] Improve video tracking speed. (in v1.01)  
+- [x] Add Kalman filter for temporal camera pose smoothing. (in v1.1)  
+- [x] Add support for photometric fitting. (expected in v2.0)  
+- [ ] Add ear landmarks detection module, and include ear landmarks during the fitting process. (expected in v2.1)  
+- [ ] Temporal smooth in the face alignment and cropping. (expected in v2.2)  
+- [ ] Add support for multi-view fitting. (expected in v2.3)  
+
+</details>
+
+
+
 
