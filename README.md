@@ -12,18 +12,21 @@
   (First two example videos were from IMavatar: <a href="https://github.com/zhengyuf/IMavatar">https://github.com/zhengyuf/IMavatar</a>)
 </div>
 
-**Date Updated**: 11-25-2024  
-**Version**: 2.0
+**Date Updated**: 12-02-2024  
+**Version**: 2.1
 
 
 ## Supported Features:
-- **Landmarks-based Fitting** 
-  - 🙂 Mediapipe face landmarks
-  - 📷 single-image reconstruction
-  - 🎥 monocular video tracking
-- **Photometric Fitting**
-  - 📷 single-image reconstruction
 
+- Use Mediapipe face landmarks
+- Return face parsing masks
+- Present outputs in an intuitive and easy-to-understand format
+
+| Scenario                        | 🙂 Landmarks-based Fitting  | 🔆 Photometric Fitting  |
+|---------------------------------|-----------------------------|--------------------------|
+| 📷 Single-Image Reconstruction | ✅ Yes | ✅ Yes |
+| 📸 Multi-View Reconstruction   | ✅ Yes | Not support yet |
+| 🎥 Monocular Video Tracking    | ✅ Yes | Not support yet |
 
 
 ---
@@ -128,6 +131,79 @@ The result ```ret_dict``` contains the following data:
 
 </details>
 
+
+---
+
+
+<details>
+  <summary><b>📸 Multi-View Reconstruction 📸</b></summary>
+
+Please follow the example in: ```./Example_multi-view-reconstruction.ipynb```
+
+```python
+from tracker_base_multiview import Tracker
+
+tracker_cfg = {
+    'mediapipe_face_landmarker_v2_path': './models/face_landmarker_v2_with_blendshapes.task',
+    'flame_model_path': './models/FLAME2020/generic_model.pkl',
+    'flame_lmk_embedding_path': './models/landmark_embedding.npy',
+    'tex_space_path': './models/FLAME_albedo_from_BFM.npz',
+    'face_parsing_model_path': './utils/face_parsing/79999_iter.pth',
+    'uv_coord_mapping_file_path': './models/uv2vert_256.npy',
+    'template_mesh_file_path': './models/head_template.obj',
+    'result_img_size': 512,
+    'device': device,
+}
+
+tracker = Tracker(tracker_cfg)
+
+# file paths of multi-views for the same face
+img_paths = [
+    './assets/multi-view-example/img_aligned_(-0.5_0.0).jpg',
+    './assets/multi-view-example/img_aligned_(0.0_-0.5).jpg',
+    './assets/multi-view-example/img_aligned_(0.0_0.0).jpg',
+    './assets/multi-view-example/img_aligned_(0.0_0.5).jpg',
+    './assets/multi-view-example/img_aligned_(0.5_0.0).jpg',
+]
+
+ret_dict = tracker.load_images_and_run(img_paths, realign=True, photometric_fitting=False)
+
+```
+
+The result ```ret_dict``` contains the following data:
+
+- **vertices** `(5023, 3)`  
+  The reconstructed canonical FLAME mesh vertices (including expression).  
+- **shape** `(1, 100)`  
+  The FLAME canonical shape code.  
+- **exp** `(1, 50)`  
+  The FLAME canonical expression code.  
+- **pose** `(1, 6)`  
+  The FLAME canonical head (first 3 values) and jaw (last 3 values) poses.  
+- **eye_pose** `(1, 6)`  
+  The FLAME canonical eyeball poses.  
+- **tex** `(1, 50)`  
+  The FLAME canonical parametric texture code.  
+- **light** `(1, 9, 3)`  
+  The estimated canonical SH lighting coefficients.  
+- **cam** `N*(6,)`  
+  The estimated 6DoF camera pose (yaw, pitch, roll, x, y, z) for each view.  
+- **img_rendered** `N*(256, 256, 3)`  
+  Rendered shapes on top of the original images (for visualization purposes only).  
+- **mesh_rendered** `N*(256, 256, 3)`  
+  Rendered mesh shapes with landmarks (for visualization purposes only).  
+- **img** `N*(512, 512, 3)`  
+  The images (views) on which the FLAME model was fit.  
+- **img_aligned** `N*(512, 512, 3)`  
+  The aligned images.  
+- **parsing** `N*(512, 512, 3)`  
+  The face semantic parsing results of `img`.  
+- **parsing_aligned** `N*(512, 512, 3)`  
+  The face semantic parsing results of `img_aligned`.
+
+</details>
+
+---
 
 <details>
   <summary><b>🎥 Monocular Video-Based Tracking 🎥</b></summary>
@@ -369,12 +445,12 @@ Our code can be used for research purposes, **provided that the terms of the lic
 <details>
   <summary><b>Todo List</b></summary>
 
-- [x] Improve video tracking speed. (in v1.01)  
-- [x] Add Kalman filter for temporal camera pose smoothing. (in v1.1)  
-- [x] Add support for photometric fitting. (expected in v2.0)  
-- [ ] Add ear landmarks detection module, and include ear landmarks during the fitting process. (expected in v2.1)  
-- [ ] Temporal smooth in the face alignment and cropping. (expected in v2.2)  
-- [ ] Add support for multi-view fitting. (expected in v2.3)  
+- [x] Improve video tracking speed. (addressed in v1.01)  
+- [x] Add Kalman filter for temporal camera pose smoothing. (addressed in v1.1)  
+- [x] Add support for photometric fitting. (addressed in v2.0)  
+- [x] Add support for multi-view fitting. (addressed in v2.1)  
+- [ ] Add ear landmarks detection module, and include ear landmarks during the fitting process.
+- [ ] Temporal smooth in the face alignment and cropping.  
 
 </details>
 
