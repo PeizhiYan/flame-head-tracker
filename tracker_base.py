@@ -905,7 +905,13 @@ class Tracker():
         )
 
         # optimization loop
-        for iter in range(800):
+        if continue_fit:
+            # continue to fit on the next video frame
+            total_iterations = 300
+        else:
+            # initial fitting, take longer time
+            total_iterations = 800      
+        for iter in range(total_iterations):
 
             # flame shape model
             optimized_pose = torch.from_numpy(params['pose']).to(self.device).detach()

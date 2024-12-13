@@ -742,23 +742,7 @@ class Tracker():
             gt_face_mask = torch.from_numpy(face_mask_resized)[None].detach().to(self.device) # [1,H,W] boolean
             gt_face_masks.append(gt_face_mask)
 
-
-        # # run Mediapipe face detector
-        # lmks_dense_list = []
-        # face_landmarks_list = []
-        # for img_resized in imgs_resized:
-        #     lmks_dense, _ = self.mediapipe_face_detection(img_resized)
-        #     if lmks_dense is None:
-        #         # no face detected
-        #         lmks_dense_list.append(None)
-        #         face_landmarks_list.append(None)
-        #         continue
-        #     lmks_dense[:, :2] = lmks_dense[:, :2] / float(self.flame_cfg.cropped_size) * 2 - 1 # normalize landmarks
-        #     face_landmarks = convert_landmarks_mediapipe_to_dlib(lmks_mp=lmks_dense) # 68 dlib landmarks
-        #     lmks_dense_list.append(lmks_dense)
-        #     face_landmarks_list.append(face_landmarks)
-
-        # run Mediapipe face detector
+        # run face landmarks detector
         lmks_dense_list = []
         face_landmarks_list = []
         for img_resized in imgs_resized:
@@ -844,14 +828,6 @@ class Tracker():
         for iter in range(total_iterations):
             e_opt_rigid.zero_grad()
 
-            # # update learning rate
-            # if iter == 400:
-            #     e_opt_rigid.param_groups[0]['lr'] = 0.005    # For translation
-            #     e_opt_rigid.param_groups[1]['lr'] = 0.01     # For rotation
-            # # update loss term weights
-            # if iter <= 400: l_f = 100; l_c = 500 # more weights to contour
-            # else: l_f = 500; l_c = 100 # more weights to face
-
             # construct canonical shape
             vertices, _, _ = self.flame(shape_params=shape, expression_params=exp, pose_params=pose) # [1, N, 3]
             count = 0
@@ -886,22 +862,6 @@ class Tracker():
             loss.backward()
             e_opt_rigid.step()
 
-        # the optimized camera pose from the Stage 1
-        # prepare camera for Stage 2
-        optimized_camera_pose_list = []
-        cam_list = []
-        for i in range(len(imgs)):
-            # camera pose for the i-the view
-            d_camera_rotation = d_camera_rotation_list[i]
-            d_camera_translation = d_camera_translation_list[i]
-            optimized_camera_pose = camera_pose + torch.cat((d_camera_rotation, d_camera_translation))
-            optimized_camera_pose = optimized_camera_pose.detach()
-            optimized_camera_pose_list.append(optimized_camera_pose)
-            Rt = create_diff_world_to_view_matrix(optimized_camera_pose)
-            cam = PerspectiveCamera(Rt=Rt, fov=self.fov, bg=self.bg_color, 
-                                    image_width=self.W, image_height=self.H, znear=self.znear, zfar=self.zfar)
-            cam_list.append(cam)
-
         ############################
         ## Stage 2: fine fitting   #
         ############################
@@ -935,16 +895,14 @@ class Tracker():
             {'params': [d_light], 'lr': 0.005}, 
             {'params': [d_exp], 'lr': 0.005}, 
             {'params': [d_jaw], 'lr': 0.005},
-            {'params': [eye_pose], 'lr': 0.005},
-            # {'params': [d_camera_translation], 'lr': 0.005}, 
-            # {'params': [d_camera_rotation], 'lr': 0.005},
+            {'params': [eye_pose], 'lr': 0.005}
         ]
         if shape_code is None:
             finetune_params.append({'params': [d_shape], 'lr': 0.005})
 
         # fine optimizer
         e_opt_fine = torch.optim.Adam(
-            finetune_params,
+            finetune_params + camera_params,
             weight_decay=0.0001
         )
 
@@ -972,8 +930,16 @@ class Tracker():
                 else:
                     count += 1
 
-                # get the camera for the i-th view
-                cam = cam_list[i]
+                # # get the camera for the i-th view
+                # cam = cam_list[i]
+
+                # prep camera for the i-th view
+                d_camera_rotation = d_camera_rotation_list[i]
+                d_camera_translation = d_camera_translation_list[i]
+                optimized_camera_pose = camera_pose + torch.cat((d_camera_rotation, d_camera_translation))
+                Rt = create_diff_world_to_view_matrix(optimized_camera_pose)
+                cam = PerspectiveCamera(Rt=Rt, fov=self.fov, bg=self.bg_color, 
+                                        image_width=self.W, image_height=self.H, znear=self.znear, zfar=self.zfar)
 
                 # retrive ground-truth data for the i-th view
                 gt_landmark = gt_landmark_tensor[i][None]
@@ -1012,6 +978,21 @@ class Tracker():
             loss = loss / count # average across valid views
             loss.backward()
             e_opt_fine.step()
+
+        # Get the optimized camera poses
+        optimized_camera_pose_list = []
+        cam_list = []
+        for i in range(len(imgs)):
+            # camera pose for the i-the view
+            d_camera_rotation = d_camera_rotation_list[i]
+            d_camera_translation = d_camera_translation_list[i]
+            optimized_camera_pose = camera_pose + torch.cat((d_camera_rotation, d_camera_translation))
+            optimized_camera_pose = optimized_camera_pose.detach()
+            optimized_camera_pose_list.append(optimized_camera_pose)
+            Rt = create_diff_world_to_view_matrix(optimized_camera_pose)
+            cam = PerspectiveCamera(Rt=Rt, fov=self.fov, bg=self.bg_color, 
+                                    image_width=self.W, image_height=self.H, znear=self.znear, zfar=self.zfar)
+            cam_list.append(cam)
 
         ##############################
         ## for displaying results    #
