@@ -18,6 +18,7 @@
 #  2) Added create_diff_world_to_view_matrix function
 #  3) Added getProjectionMatrix2 function
 #  4) Added verts_clip_to_ndc function
+#  5) Added fov_to_focal
 #
 
 import torch
@@ -86,6 +87,12 @@ def fov2focal(fov, pixels):
 
 def focal2fov(focal, pixels):
     return 2*math.atan(pixels/(2*focal))
+
+def fov_to_focal(fov, sensor_size):
+    # based on FOV and Sensor Size, compute focal length
+    # fov : in degrees
+    fov_ = math.radians(fov) # convert to radians
+    return sensor_size / (2.0 * math.tan(fov_ / 2.0))
 
 
 # Copyright (c) 2020-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved. 
@@ -259,4 +266,5 @@ def verts_clip_to_ndc(verts_clip : torch.tensor, image_size, out_dim=2):
     verts_ndc[:,1] *= -1 # flip y
     verts_ndc = (verts_ndc / 2.0 + 0.5) * image_size # de-normalize
     return verts_ndc
+
 

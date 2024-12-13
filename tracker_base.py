@@ -2,7 +2,7 @@
 ## FLAME Tracker Reconstruction Base.     #
 ## -------------------------------------- #
 ## Author: Peizhi Yan                     #
-## Update: 11/19/2024                     #
+## Update: 12/12/2024                     #
 ###########################################
 
 ## Copyright (C) Peizhi Yan. 2024
@@ -20,6 +20,9 @@ import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
+# FAN (1.4.1)
+import face_alignment
+
 ## FLAME
 from utils.flame_lib.FLAME import FLAME, FLAMETex
 
@@ -32,8 +35,8 @@ from utils.face_parsing.FaceParsingUtil import FaceParsing
 
 ## Utility
 import utils.o3d_utils as o3d_utils
-from utils.image_utils import read_img, min_max, uint8_img, norm_img, image_align, display_landmarks_with_cv2, get_face_mask
-from utils.graphics_utils import create_diff_world_to_view_matrix, verts_clip_to_ndc
+from utils.image_utils import read_img, min_max, uint8_img, norm_img, image_align, display_landmarks_with_cv2, get_face_mask, get_foreground_mask
+from utils.graphics_utils import create_diff_world_to_view_matrix, verts_clip_to_ndc, fov_to_focal
 
 ## DECA
 from utils.decalib.deca import DECA
@@ -101,6 +104,7 @@ class Tracker():
             self.kf_process_noise = tracker_cfg['kalman_filter_process_noise_factor']
         else:
             self.use_kalman_filter = False
+        self.set_landmark_detector('mediapipe')
 
         # Mediapipe face landmark detector
         base_options = python.BaseOptions(model_asset_path=tracker_cfg['mediapipe_face_landmarker_v2_path'])
@@ -109,6 +113,9 @@ class Tracker():
                                                output_facial_transformation_matrixes=True,
                                                num_faces=1)
         self.mediapipe_detector = vision.FaceLandmarker.create_from_options(options)
+
+        # FAN face alignment predictor (68 landmarks)
+        self.fa = face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_D, flip_input=False)
 
         # Face parsing model
         self.face_parser = FaceParsing(model_path=tracker_cfg['face_parsing_model_path'])
@@ -125,7 +132,10 @@ class Tracker():
 
         # Camera settings
         self.H = self.W = self.flame_cfg.cropped_size
-        self.fov = 20.0  # x&y-axis FOV
+        self.DEFAULT_FOV = 20.0  # default x&y-axis FOV in degrees
+        self.DEFAULT_DISTANCE = 1.0 # default camera to 3D world coordinate center distance
+        self.DEFAULT_FOCAL = fov_to_focal(fov = self.DEFAULT_FOV, sensor_size = self.H)
+        self.update_fov(fov = self.DEFAULT_FOV) # initialize the camera focal length and to object distance
         self.bg_color = (1.0,1.0,1.0) # White
         self.znear = 0.01
         self.zfar  = 100.0
@@ -160,6 +170,26 @@ class Tracker():
         print('Flame Tracker ready.')
 
 
+    def set_landmark_detector(self, landmark_detector='mediapipe'):
+        """
+        landmark_detector: choose either 'mediapipe' or 'FAN'
+        """
+        assert landmark_detector in ['mediapipe', 'FAN'], "landmark_detector need to be either mediapipe or FAN"
+        self.landmark_detector = landmark_detector
+
+    
+    def update_fov(self, fov : float):
+        """
+        Update the camera FOV and adjust the camera to object distance
+        correspondingly
+        """
+        # Assert that the FOV is within the reasonable range
+        assert 20 <= fov <= 60, f"FOV must be between 20 and 60. Provided: {fov}"
+        self.fov = fov # update the fov
+        self.focal = fov_to_focal(fov = fov, sensor_size = self.H) # compute new focal length
+        self.distance = self.DEFAULT_DISTANCE * (self.focal / self.DEFAULT_FOCAL) # compute new camera to object distance
+        
+
     def mediapipe_face_detection(self, img):
         """
         Run Mediapipe face detector
@@ -188,10 +218,28 @@ class Tracker():
         lmks_dense[:, 1] = lmks_dense[:, 1] * img.shape[0]
 
         return lmks_dense, blend_scores
+    
+
+    def fan_face_landmarks(self, img):
+        """
+        Run Mediapipe face detector
+        input:
+            - img: image data  numpy  uint8
+        output:
+            - lmks_dense: landmarks numpy [68, 2], the locations are in image scale
+        """
+        face_landmarks = self.fa.get_landmarks(img)
+        if face_landmarks is None:
+            # no face detected
+            return None
+        else:
+            # return face landmarks of the first detected face
+            return face_landmarks[0] # [68, 2]
 
 
     def load_image_and_run(self, 
-                           img_path, realign=True, photometric_fitting=False,
+                           img_path, realign=True, 
+                           photometric_fitting=False,
                            prev_ret_dict=None, shape_code=None):
         """
         Load image from given path, then run FLAME tracking
@@ -220,15 +268,24 @@ class Tracker():
         output:
             -ret_dict: results dictionary
         """
-        
+
         # run Mediapipe face detector
         lmks_dense, blend_scores = self.mediapipe_face_detection(img)
         if lmks_dense is None:
             # no face detected
             return None
-
-        face_landmarks = convert_landmarks_mediapipe_to_dlib(lmks_mp=lmks_dense)
-
+        
+        if self.landmark_detector == 'mediapipe':
+            face_landmarks = convert_landmarks_mediapipe_to_dlib(lmks_mp=lmks_dense)
+        elif self.landmark_detector == 'FAN':
+            # run FAN face landmarks predictor
+            face_landmarks = self.fan_face_landmarks(img)
+            if face_landmarks is None:
+                # no face detected
+                return None
+        else:
+            return None
+        
         # re-align image (tracking standard), this image will be used in our network model
         img_aligned = image_align(img, face_landmarks, output_size=self.img_size, standard='tracking', 
                                   padding_mode='constant')
@@ -248,6 +305,7 @@ class Tracker():
         if photometric_fitting:
             # run photometric fitting
             face_mask = get_face_mask(parsing=parsing_mask, keep_ears=True)
+            # face_mask = get_foreground_mask(parsing=parsing_mask)
             ret_dict = self.run_fitting_photometric(img, face_mask, deca_dict, prev_ret_dict, shape_code)
         else:
             # run facial landmark-based fitting
@@ -422,7 +480,17 @@ class Tracker():
         # run Mediapipe face detector
         lmks_dense, _ = self.mediapipe_face_detection(img_resized)
         lmks_dense[:, :2] = lmks_dense[:, :2] / float(self.flame_cfg.cropped_size) * 2 - 1 # normalize landmarks
-        face_landmarks = convert_landmarks_mediapipe_to_dlib(lmks_mp=lmks_dense) # 68 dlib landmarks
+        
+        # gt_landmark can be either mediapipe's or FAN's landmarks
+        if self.landmark_detector == 'mediapipe':
+            face_landmarks = convert_landmarks_mediapipe_to_dlib(lmks_mp=lmks_dense)
+        elif self.landmark_detector == 'FAN':
+            # run FAN face landmarks predictor
+            face_landmarks = self.fan_face_landmarks(img_resized)
+            if face_landmarks is None:
+                # no face detected
+                return None
+            face_landmarks = face_landmarks[:, :2] / float(self.flame_cfg.cropped_size) * 2 - 1 # normalize landmarks
 
         # prepare target 68 landmarks
         gt_landmark = np.array(face_landmarks).astype(np.float32)
@@ -439,7 +507,7 @@ class Tracker():
 
         # prepare 6DoF camera pose tensor
         if continue_fit == False:
-            camera_pose = torch.tensor([0, 0, 0, 0, 0, 1.0], dtype=torch.float32).to(self.device) # [yaw, pitch, roll, x, y, z]
+            camera_pose = torch.tensor([0, 0, 0, 0, 0, self.distance], dtype=torch.float32).to(self.device) # [yaw, pitch, roll, x, y, z]
         else:
             # use previous frame's estimation to initialize
             camera_pose = torch.tensor(prev_ret_dict['cam'], dtype=torch.float32).to(self.device)
@@ -670,9 +738,12 @@ class Tracker():
         # convert the parameters to numpy arrays
         params = {}
         for key in ['shape', 'tex', 'exp', 'pose', 'light']:
-            if key == 'shape' and shape_code is not None:
-                # use pre-estimated global shape code
-                params[key] = shape_code.detach().cpu().numpy()
+            if key == 'shape':
+                if shape_code is not None:
+                    # use pre-estimated global shape code
+                    params[key] = shape_code.detach().cpu().numpy()
+                else:
+                    params[key] = deca_dict[key].detach().cpu().numpy() * 0.0
             else:
                 params[key] = deca_dict[key].detach().cpu().numpy()
 
@@ -686,7 +757,18 @@ class Tracker():
         # run Mediapipe face detector
         lmks_dense, _ = self.mediapipe_face_detection(img_resized)
         lmks_dense[:, :2] = lmks_dense[:, :2] / float(self.flame_cfg.cropped_size) * 2 - 1 # normalize landmarks
-        face_landmarks = convert_landmarks_mediapipe_to_dlib(lmks_mp=lmks_dense) # 68 dlib landmarks
+        ##face_landmarks = convert_landmarks_mediapipe_to_dlib(lmks_mp=lmks_dense) # 68 dlib landmarks
+
+        # gt_landmark can be either mediapipe's or FAN's landmarks
+        if self.landmark_detector == 'mediapipe':
+            face_landmarks = convert_landmarks_mediapipe_to_dlib(lmks_mp=lmks_dense)
+        elif self.landmark_detector == 'FAN':
+            # run FAN face landmarks predictor
+            face_landmarks = self.fan_face_landmarks(img_resized)
+            if face_landmarks is None:
+                # no face detected
+                return None
+            face_landmarks = face_landmarks[:, :2] / float(self.flame_cfg.cropped_size) * 2 - 1 # normalize landmarks
 
         # prepare target 68 landmarks
         gt_landmark = np.array(face_landmarks).astype(np.float32)
@@ -702,7 +784,7 @@ class Tracker():
 
         # prepare 6DoF camera pose tensor
         if continue_fit == False:
-            camera_pose = torch.tensor([0, 0, 0, 0, 0, 1.0], dtype=torch.float32).to(self.device) # [yaw, pitch, roll, x, y, z]
+            camera_pose = torch.tensor([0, 0, 0, 0, 0, self.distance], dtype=torch.float32).to(self.device) # [yaw, pitch, roll, x, y, z]
         else:
             # use previous frame's estimation to initialize
             camera_pose = torch.tensor(prev_ret_dict['cam'], dtype=torch.float32).to(self.device)
@@ -856,20 +938,21 @@ class Tracker():
 
             # render textured mesh (using PyTorch3D's renderer)
             verts_transformed = verts_clip[...,:3]
-            verts_transformed = verts_transformed[..., :3] / (verts_clip[...,3:4] + 1e-8) # perspective projection
+            verts_transformed = verts_transformed[..., :3] / (verts_clip[...,3:4] + 1e-8) # perspective division
             rendered_textured = self.flame_texture_render(vertices, verts_transformed, texture, light+d_light)
             rendered_textured = rendered_textured['images'].flip(2) # [1,C,H,W]
             rendered_textured = rendered_textured[:,:3,:,:] # [1,3,H,W] RGBA to RGB 
 
             # loss computation and optimization
             loss_photo = compute_batch_pixelwise_l1_loss(gt_img, rendered_textured, gt_face_mask) * 8  # photometric loss
-            loss_facial = util.l2_distance(landmarks2d[:, 17:, :2], gt_landmark[:, 17:, :2]) * 1
-            loss_contour = util.l2_distance(landmarks2d[:, :17, :2], gt_landmark[:, :17, :2]) * 0.2 # contour loss
+            loss_facial = util.l2_distance(landmarks2d[:, 17:, :2], gt_landmark[:, 17:, :2]) * 1       # facial 51 landmarks loss
+            loss_contour = util.l2_distance(landmarks2d[:, :17, :2], gt_landmark[:, :17, :2]) * 1 #0.2    # contour 17 landmarks loss
+            #loss_contour = 0
             loss_eyes = util.l2_distance(eyes_landmarks2d, gt_eyes_landmark) * 1
-            loss_reg_shape = (torch.sum((shape + d_shape) ** 2) / 2) * 1e-3
-            loss_reg_exp = (torch.sum((exp + d_exp) ** 2) / 2) * 1e-3
-            loss_reg_tex = (torch.sum((tex + d_tex) ** 2) / 2) * 1e-4
-            loss_reg = loss_reg_shape + loss_reg_exp + loss_reg_tex
+            loss_reg_shape = (torch.sum((shape + d_shape) ** 2) / 2) * 1e-4 # 1e-4
+            loss_reg_exp = (torch.sum((exp + d_exp) ** 2) / 2) * 1e-4 # 1e-3
+            #loss_reg_tex = (torch.sum((tex + d_tex) ** 2) / 2) * 1e-5 # 1e-4
+            loss_reg = loss_reg_shape + loss_reg_exp # + loss_reg_tex
             loss = loss_photo + loss_facial + loss_contour + loss_eyes + loss_reg
             # if iter % 50 == 0: 
             #     print(loss_photo.item(), loss_facial.item(), loss_reg.item())
@@ -893,7 +976,7 @@ class Tracker():
                                         expression_params=exp+d_exp, 
                                         pose_params=optimized_pose, 
                                         eye_pose_params=eye_pose)
-
+            
             # flame texture model
             texture = self.flametex(tex + d_tex) # [N, 3, 256, 256]
             

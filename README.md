@@ -12,20 +12,21 @@
   (First two example videos were from IMavatar: <a href="https://github.com/zhengyuf/IMavatar">https://github.com/zhengyuf/IMavatar</a>)
 </div>
 
-**Date Updated**: 12-02-2024  
-**Version**: 2.1
+**Date Updated**: 12-11-2024  
+**Version**: 2.2
 
 
 ## Supported Features:
 
-- Use Mediapipe face landmarks
+- Either Mediapipe or FAN detected face landmarks
 - Return face parsing masks
+- Allow adjustable camera FOV (currently support image-based reconstruction nonly) 
 - Present outputs in an intuitive and easy-to-understand format
 
 | Scenario                        | 🙂 Landmarks-based Fitting  | 🔆 Photometric Fitting  |
 |---------------------------------|-----------------------------|--------------------------|
 | 📷 Single-Image Reconstruction | ✅ Yes | ✅ Yes |
-| 📸 Multi-View Reconstruction   | ✅ Yes | Not support yet |
+| 📸 Multi-View Reconstruction   | ✅ Yes | ✅ Yes |
 | 🎥 Monocular Video Tracking    | ✅ Yes | Not support yet |
 
 
@@ -140,35 +141,6 @@ The result ```ret_dict``` contains the following data:
 
 Please follow the example in: ```./Example_multi-view-reconstruction.ipynb```
 
-```python
-from tracker_base_multiview import Tracker
-
-tracker_cfg = {
-    'mediapipe_face_landmarker_v2_path': './models/face_landmarker_v2_with_blendshapes.task',
-    'flame_model_path': './models/FLAME2020/generic_model.pkl',
-    'flame_lmk_embedding_path': './models/landmark_embedding.npy',
-    'tex_space_path': './models/FLAME_albedo_from_BFM.npz',
-    'face_parsing_model_path': './utils/face_parsing/79999_iter.pth',
-    'uv_coord_mapping_file_path': './models/uv2vert_256.npy',
-    'template_mesh_file_path': './models/head_template.obj',
-    'result_img_size': 512,
-    'device': device,
-}
-
-tracker = Tracker(tracker_cfg)
-
-# file paths of multi-views for the same face
-img_paths = [
-    './assets/multi-view-example/img_aligned_(-0.5_0.0).jpg',
-    './assets/multi-view-example/img_aligned_(0.0_-0.5).jpg',
-    './assets/multi-view-example/img_aligned_(0.0_0.0).jpg',
-    './assets/multi-view-example/img_aligned_(0.0_0.5).jpg',
-    './assets/multi-view-example/img_aligned_(0.5_0.0).jpg',
-]
-
-ret_dict = tracker.load_images_and_run(img_paths, realign=True, photometric_fitting=False)
-
-```
 
 The result ```ret_dict``` contains the following data:
 
@@ -430,6 +402,7 @@ Our code is mainly based on the following repositories:
 - GaussianAvatars: https://shenhanqian.github.io/gaussian-avatars
 - FaceParsing: https://github.com/zllrunning/face-parsing.PyTorch
 - Dlib2Mediapipe: https://github.com/PeizhiYan/Mediapipe_2_Dlib_Landmarks
+- Face Alignment: https://github.com/1adrianb/face-alignment 
 
 We want to acknowledge the contributions of the authors of these repositories. We do not claim ownership of any code originating from these repositories, and any modifications we have made are solely for our specific use case. All original rights and attributions remain with the respective authors.
 
