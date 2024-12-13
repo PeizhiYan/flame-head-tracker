@@ -20,6 +20,7 @@ pytorch3d/
 output/
 
 # ignore example image and video
+assets/00000.png
 assets/00012.png
 assets/FFHQ/
 assets/IMG_2647.MOV

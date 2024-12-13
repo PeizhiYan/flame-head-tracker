@@ -304,8 +304,7 @@ class Tracker():
         
         if photometric_fitting:
             # run photometric fitting
-            face_mask = get_face_mask(parsing=parsing_mask, keep_ears=True)
-            # face_mask = get_foreground_mask(parsing=parsing_mask)
+            face_mask = get_face_mask(parsing=parsing_mask, keep_ears=False)
             ret_dict = self.run_fitting_photometric(img, face_mask, deca_dict, prev_ret_dict, shape_code)
         else:
             # run facial landmark-based fitting
@@ -738,12 +737,11 @@ class Tracker():
         # convert the parameters to numpy arrays
         params = {}
         for key in ['shape', 'tex', 'exp', 'pose', 'light']:
-            if key == 'shape':
-                if shape_code is not None:
-                    # use pre-estimated global shape code
-                    params[key] = shape_code.detach().cpu().numpy()
-                else:
-                    params[key] = deca_dict[key].detach().cpu().numpy() * 0.0
+            if key == 'shape' and shape_code is not None:
+                # use pre-estimated global shape code
+                params[key] = shape_code.detach().cpu().numpy()
+            elif key in ['shape', 'exp']:
+                    params[key] = deca_dict[key].detach().cpu().numpy() * 0.0 # clear DECA's code
             else:
                 params[key] = deca_dict[key].detach().cpu().numpy()
 
@@ -793,7 +791,8 @@ class Tracker():
         d_camera_rotation = nn.Parameter(torch.zeros(3).float().to(self.device))
         d_camera_translation = nn.Parameter(torch.zeros(3).float().to(self.device))
         camera_params = [
-            {'params': [d_camera_translation], 'lr': 0.01}, {'params': [d_camera_rotation], 'lr': 0.05}
+            #{'params': [d_camera_translation], 'lr': 0.01}, {'params': [d_camera_rotation], 'lr': 0.05}
+            {'params': [d_camera_translation], 'lr': 0.005}, {'params': [d_camera_rotation], 'lr': 0.005}, 
         ]
 
         # camera pose optimizer
@@ -816,26 +815,26 @@ class Tracker():
             total_iterations = 200
         else:
             # initial fitting, take longer time
-            total_iterations = 500
+            total_iterations = 200 #500
         for iter in range(total_iterations):
 
-            if continue_fit == False:
-                ## initial fitting
-                # update learning rate
-                if iter == 400:
-                    e_opt_rigid.param_groups[0]['lr'] = 0.005    # For translation
-                    e_opt_rigid.param_groups[1]['lr'] = 0.01     # For rotation
-                # update loss term weights
-                if iter <= 400: l_f = 100; l_c = 500 # more weights to contour
-                else: l_f = 500; l_c = 100 # more weights to face
-            else:
-                ## continue fitting
-                # update learning rate
-                e_opt_rigid.param_groups[0]['lr'] = 0.005    # For translation
-                e_opt_rigid.param_groups[1]['lr'] = 0.01     # For rotation
-                # update loss term weights
-                if iter <= 100: l_f = 100; l_c = 500 # more weights to contour
-                else: l_f = 500; l_c = 100 # more weights to face
+            # if continue_fit == False:
+            #     ## initial fitting
+            #     # update learning rate
+            #     if iter == 400:
+            #         e_opt_rigid.param_groups[0]['lr'] = 0.005    # For translation
+            #         e_opt_rigid.param_groups[1]['lr'] = 0.01     # For rotation
+            #     # update loss term weights
+            #     if iter <= 400: l_f = 100; l_c = 500 # more weights to contour
+            #     else: l_f = 500; l_c = 100 # more weights to face
+            # else:
+            #     ## continue fitting
+            #     # update learning rate
+            #     e_opt_rigid.param_groups[0]['lr'] = 0.005    # For translation
+            #     e_opt_rigid.param_groups[1]['lr'] = 0.01     # For rotation
+            #     # update loss term weights
+            #     if iter <= 100: l_f = 100; l_c = 500 # more weights to contour
+            #     else: l_f = 500; l_c = 100 # more weights to face
 
             vertices, _, _ = self.flame(shape_params=shape, expression_params=exp, pose_params=pose) # [1, N, 3]
 
@@ -852,8 +851,8 @@ class Tracker():
             landmarks2d = landmarks3d[:,:,:2] / float(self.flame_cfg.cropped_size) * 2 - 1  # [1, 68, 2]
 
             # loss computation and optimization
-            loss_facial = util.l2_distance(landmarks2d[:, 17:, :2], gt_landmark[:, 17:, :2]) * l_f
-            loss_contour = util.l2_distance(landmarks2d[:, :17, :2], gt_landmark[:, :17, :2]) * l_c # contour loss
+            loss_facial = util.l2_distance(landmarks2d[:, 17:, :2], gt_landmark[:, 17:, :2]) #* l_f
+            loss_contour = util.l2_distance(landmarks2d[:, :17, :2], gt_landmark[:, :17, :2]) #* l_c # contour loss
             loss = loss_facial + loss_contour
             e_opt_rigid.zero_grad()
             loss.backward()
@@ -889,9 +888,9 @@ class Tracker():
 
         finetune_params = [
             {'params': [d_tex], 'lr': 0.005}, 
-            {'params': [d_light], 'lr': 0.002}, 
+            {'params': [d_light], 'lr': 0.005}, 
             {'params': [d_exp], 'lr': 0.005}, 
-            {'params': [d_jaw], 'lr': 0.025},
+            {'params': [d_jaw], 'lr': 0.005},
             {'params': [eye_pose], 'lr': 0.005},
             {'params': [d_camera_translation], 'lr': 0.005}, 
             {'params': [d_camera_rotation], 'lr': 0.005},
@@ -943,9 +942,17 @@ class Tracker():
             rendered_textured = rendered_textured['images'].flip(2) # [1,C,H,W]
             rendered_textured = rendered_textured[:,:3,:,:] # [1,3,H,W] RGBA to RGB 
 
+            # # Exclude nose wing landmarks
+            # exclude_indices = [31, 32, 34, 35]
+            # lmks_mask = torch.ones(landmarks2d[:, :, :2].shape[1], dtype=torch.bool)
+            # lmks_mask[exclude_indices] = False
+            # filtered_landmarks2d = landmarks2d[:, :, :2][:, lmks_mask]
+            # filtered_gt_landmark = gt_landmark[:, :, :2][:, lmks_mask]
+
             # loss computation and optimization
             loss_photo = compute_batch_pixelwise_l1_loss(gt_img, rendered_textured, gt_face_mask) * 8  # photometric loss
-            loss_facial = util.l2_distance(landmarks2d[:, 17:, :2], gt_landmark[:, 17:, :2]) * 1       # facial 51 landmarks loss
+            # loss_facial = util.l2_distance(filtered_landmarks2d[:, 17:, :2], filtered_gt_landmark[:, 17:, :2]) * 10   # facial 51-4 landmarks loss
+            loss_facial = util.l2_distance(landmarks2d[:, 17:, :2], gt_landmark[:, 17:, :2]) * 1       # facial 51-4 landmarks loss
             loss_contour = util.l2_distance(landmarks2d[:, :17, :2], gt_landmark[:, :17, :2]) * 1 #0.2    # contour 17 landmarks loss
             #loss_contour = 0
             loss_eyes = util.l2_distance(eyes_landmarks2d, gt_eyes_landmark) * 1

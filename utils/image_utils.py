@@ -64,7 +64,7 @@ def get_face_mask(parsing : np.array, keep_ears : bool = False):
     face_mask = (face_mask ^ non_face_mask)
     if keep_ears == False:
         ear_mask = (parsing_expanded >= 7) & (parsing_expanded <=9) # ears
-        face_mask ^ ear_mask
+        face_mask = face_mask ^ ear_mask
     
     return face_mask.astype(np.float32)
 

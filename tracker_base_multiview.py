@@ -315,7 +315,7 @@ class Tracker():
             face_mask_list = []
             for i in range(len(imgs)):
                 parsing_mask = parsing_mask_list[i]
-                face_mask = get_face_mask(parsing=parsing_mask, keep_ears=True)
+                face_mask = get_face_mask(parsing=parsing_mask, keep_ears=False)
                 face_mask_list.append(face_mask)
             ret_dict = self.run_fitting_multiview_photometric(imgs, face_mask_list, deca_dict_list, shape_code)
         else:
@@ -704,12 +704,9 @@ class Tracker():
         # convert the parameters to numpy arrays
         params = {}
         for key in ['shape', 'tex', 'exp', 'pose', 'light']:
-            if key == 'shape':
-                if shape_code is not None:
-                    # use pre-estimated global shape code
-                    params[key] = shape_code.detach().cpu().numpy()
-                else:
-                    params[key] = np.zeros([1,100], dtype=np.float32)
+            if key == 'shape' and shape_code is not None:
+                # use pre-estimated global shape code
+                params[key] = shape_code.detach().cpu().numpy()
             else:
                 count = 0
                 temp = None
@@ -723,6 +720,8 @@ class Tracker():
                 if count != 0:
                     temp = temp / count # compute the average
                     params[key] = temp
+                    if key in ['shape', 'exp']:
+                        params[key] = deca_dict[key].detach().cpu().numpy() * 0.0
                 else:
                     return None
 
@@ -823,13 +822,13 @@ class Tracker():
             d_camera_rotation_list.append(d_camera_rotation)
             d_camera_translation_list.append(d_camera_translation)
         camera_params = [
-            {'params': d_camera_rotation_list, 'lr': 0.01}, {'params': d_camera_translation_list, 'lr': 0.05}
+            {'params': d_camera_rotation_list, 'lr': 0.005}, {'params': d_camera_translation_list, 'lr': 0.005}
         ]
 
         # camera pose optimizer
         e_opt_rigid = torch.optim.Adam(
             camera_params,
-            weight_decay=0.00001
+            weight_decay=0.0001
         )
         
         # DECA's results
@@ -845,13 +844,13 @@ class Tracker():
         for iter in range(total_iterations):
             e_opt_rigid.zero_grad()
 
-            # update learning rate
-            if iter == 400:
-                e_opt_rigid.param_groups[0]['lr'] = 0.005    # For translation
-                e_opt_rigid.param_groups[1]['lr'] = 0.01     # For rotation
-            # update loss term weights
-            if iter <= 400: l_f = 100; l_c = 500 # more weights to contour
-            else: l_f = 500; l_c = 100 # more weights to face
+            # # update learning rate
+            # if iter == 400:
+            #     e_opt_rigid.param_groups[0]['lr'] = 0.005    # For translation
+            #     e_opt_rigid.param_groups[1]['lr'] = 0.01     # For rotation
+            # # update loss term weights
+            # if iter <= 400: l_f = 100; l_c = 500 # more weights to contour
+            # else: l_f = 500; l_c = 100 # more weights to face
 
             # construct canonical shape
             vertices, _, _ = self.flame(shape_params=shape, expression_params=exp, pose_params=pose) # [1, N, 3]
@@ -879,8 +878,8 @@ class Tracker():
 
                 # loss computation and optimization
                 gt_landmark = gt_landmark_tensor[i][None]
-                loss_facial = util.l2_distance(landmarks2d[:, 17:, :2], gt_landmark[:, 17:, :2]) * l_f
-                loss_contour = util.l2_distance(landmarks2d[:, :17, :2], gt_landmark[:, :17, :2]) * l_c # contour loss
+                loss_facial = util.l2_distance(landmarks2d[:, 17:, :2], gt_landmark[:, 17:, :2]) #* l_f
+                loss_contour = util.l2_distance(landmarks2d[:, :17, :2], gt_landmark[:, :17, :2]) #* l_c # contour loss
                 loss = loss + loss_facial + loss_contour
 
             loss = loss / count # average across valid views
@@ -933,9 +932,9 @@ class Tracker():
 
         finetune_params = [
             {'params': [d_tex], 'lr': 0.005}, 
-            {'params': [d_light], 'lr': 0.002}, 
+            {'params': [d_light], 'lr': 0.005}, 
             {'params': [d_exp], 'lr': 0.005}, 
-            {'params': [d_jaw], 'lr': 0.025},
+            {'params': [d_jaw], 'lr': 0.005},
             {'params': [eye_pose], 'lr': 0.005},
             # {'params': [d_camera_translation], 'lr': 0.005}, 
             # {'params': [d_camera_rotation], 'lr': 0.005},
