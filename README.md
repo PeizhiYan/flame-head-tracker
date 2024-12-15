@@ -12,15 +12,15 @@
   (First two example videos were from IMavatar: <a href="https://github.com/zhengyuf/IMavatar">https://github.com/zhengyuf/IMavatar</a>)
 </div>
 
-**Date Updated**: 12-11-2024  
-**Version**: 2.2
+**Date Updated**: 12-12-2024  
+**Version**: 2.21
 
 
 ## Supported Features:
 
 - Either Mediapipe or FAN detected face landmarks
 - Return face parsing masks
-- Allow adjustable camera FOV (currently support image-based reconstruction nonly) 
+- Allow adjustable camera FOV (currently support image-based reconstruction only) 
 - Present outputs in an intuitive and easy-to-understand format
 
 | Scenario                        | 🙂 Landmarks-based Fitting  | 🔆 Photometric Fitting  |
