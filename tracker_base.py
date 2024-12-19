@@ -478,6 +478,9 @@ class Tracker():
 
         # run Mediapipe face detector
         lmks_dense, _ = self.mediapipe_face_detection(img_resized)
+        if lmks_dense is None:
+            # no face detected
+            return None
         lmks_dense[:, :2] = lmks_dense[:, :2] / float(self.flame_cfg.cropped_size) * 2 - 1 # normalize landmarks
         
         # gt_landmark can be either mediapipe's or FAN's landmarks
