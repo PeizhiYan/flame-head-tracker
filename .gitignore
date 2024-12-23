@@ -38,6 +38,6 @@ models/mean_texture.jpg
 models/texture_data_256.npy
 models/uv_face_eye_mask.png
 models/uv_face_mask.png
-
+models/ear_landmarker.pth
 
 

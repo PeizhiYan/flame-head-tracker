@@ -12,15 +12,16 @@
   (First two example videos were from IMavatar: <a href="https://github.com/zhengyuf/IMavatar">https://github.com/zhengyuf/IMavatar</a>)
 </div>
 
-**Date Updated**: 12-12-2024  
-**Version**: 2.21
+**Date Updated**: 12-22-2024  
+**Version**: 3.0
 
 
 ## Supported Features:
 
-- Either Mediapipe or FAN detected face landmarks
-- Return face parsing masks
-- Allow adjustable camera FOV (currently support image-based reconstruction only) 
+- Choose to use either Mediapipe or FAN face landmark detectors
+- Include face parsing masks
+- Allow adjustable camera FOV (currently support image-based reconstruction only)
+- Support to use detected ear landmarks to improve the alignment
 - Present outputs in an intuitive and easy-to-understand format
 
 | Scenario                        | 🙂 Landmarks-based Fitting  | 🔆 Photometric Fitting  |
@@ -71,6 +72,7 @@ tracker_cfg = {
     'mediapipe_face_landmarker_v2_path': './models/face_landmarker_v2_with_blendshapes.task',
     'flame_model_path': './models/FLAME2020/generic_model.pkl',
     'flame_lmk_embedding_path': './models/landmark_embedding.npy',
+    'ear_landmarker_path': './models/ear_landmarker.pth', # this is optional, if you do not want to use ear landmarks during fitting, just remove this line
     'tex_space_path': './models/FLAME_albedo_from_BFM.npz',
     'face_parsing_model_path': './utils/face_parsing/79999_iter.pth',
     'uv_coord_mapping_file_path': './models/uv2vert_256.npy',
@@ -80,6 +82,10 @@ tracker_cfg = {
 }
 
 tracker = Tracker(tracker_cfg)
+
+tracker.update_fov(fov=20)           # optional setting
+tracker.set_landmark_detector('FAN') # optional setting
+
 
 ret_dict = tracker.load_image_and_run(img_path, realign=True, photometric_fitting=False)
 ```
@@ -189,6 +195,7 @@ tracker_cfg = {
     'mediapipe_face_landmarker_v2_path': './models/face_landmarker_v2_with_blendshapes.task',
     'flame_model_path': './models/FLAME2020/generic_model.pkl',
     'flame_lmk_embedding_path': './models/landmark_embedding.npy',
+    'ear_landmarker_path': './models/ear_landmarker.pth', # this is optional, if you do not want to use ear landmarks during fitting, just remove this line
     'tex_space_path': './models/FLAME_albedo_from_BFM.npz',
     'face_parsing_model_path': './utils/face_parsing/79999_iter.pth',
     'uv_coord_mapping_file_path': './models/uv2vert_256.npy',
@@ -350,6 +357,10 @@ Because of copyright concerns, we cannot re-share any of the following model fil
 
 - Download ```face_landmarker.task``` from https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task, rename as ```face_landmarker_v2_with_blendshapes.task```, and save at ```./models/```
 
+#### Ear Landmarker
+
+If you want to use ear landmarks during the fitting, please download our pre-trained ear landmarker model ```ear_landmarker.pth``` from https://github.com/PeizhiYan/flame-head-tracker/releases/download/resource/ear_landmarker.pth, and save at ```./models/```. But note that, this mode was trained on the i-Bug ear landmarks dataset, which is for RESEARCH purpose ONLY.
+
 
 The final structure of ```./models/``` is:
 
@@ -371,6 +382,7 @@ The final structure of ```./models/``` is:
     ├── texture_data_256.npy
     ├── uv_face_eye_mask.png
     └── uv_face_mask.png
+    └── ear_landmarker.pth
 ```
 
 </details>
@@ -402,7 +414,9 @@ Our code is mainly based on the following repositories:
 - GaussianAvatars: https://shenhanqian.github.io/gaussian-avatars
 - FaceParsing: https://github.com/zllrunning/face-parsing.PyTorch
 - Dlib2Mediapipe: https://github.com/PeizhiYan/Mediapipe_2_Dlib_Landmarks
-- Face Alignment: https://github.com/1adrianb/face-alignment 
+- Face Alignment: https://github.com/1adrianb/face-alignment
+- i-Bug Ears (ear landmarks dataset): https://ibug.doc.ic.ac.uk/resources/ibug-ears/
+- Ear Landmark Detection: https://github.com/Dryjelly/Face_Ear_Landmark_Detection
 
 We want to acknowledge the contributions of the authors of these repositories. We do not claim ownership of any code originating from these repositories, and any modifications we have made are solely for our specific use case. All original rights and attributions remain with the respective authors.
 
@@ -422,8 +436,9 @@ Our code can be used for research purposes, **provided that the terms of the lic
 - [x] Add Kalman filter for temporal camera pose smoothing. (addressed in v1.1)  
 - [x] Add support for photometric fitting. (addressed in v2.0)  
 - [x] Add support for multi-view fitting. (addressed in v2.1)  
-- [ ] Add ear landmarks detection module, and include ear landmarks during the fitting process.
-- [ ] Temporal smooth in the face alignment and cropping.  
+- [x] Add ear landmarks detection module, and include ear landmarks during the fitting process. (addressed in v3.0)
+- [ ] Temporal smooth in the face alignment and cropping.
+- [ ] Improve efficiency and reconstruction quality.
 
 </details>
 
