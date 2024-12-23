@@ -12,8 +12,8 @@
   (First two example videos were from IMavatar: <a href="https://github.com/zhengyuf/IMavatar">https://github.com/zhengyuf/IMavatar</a>)
 </div>
 
-**Date Updated**: 12-22-2024  
-**Version**: 3.0
+**Date Updated**: 12-23-2024  
+**Version**: 3.01
 
 
 ## Supported Features:
@@ -437,6 +437,8 @@ Our code can be used for research purposes, **provided that the terms of the lic
 - [x] Add support for photometric fitting. (addressed in v2.0)  
 - [x] Add support for multi-view fitting. (addressed in v2.1)  
 - [x] Add ear landmarks detection module, and include ear landmarks during the fitting process. (addressed in v3.0)
+- [ ] Add symmetric constraints to ear landmarks-guided fitting (when the other ear is not visible).
+- [ ] Add dynamic ear landmark loss weights based on the head pose.
 - [ ] Temporal smooth in the face alignment and cropping.
 - [ ] Improve efficiency and reconstruction quality.
 

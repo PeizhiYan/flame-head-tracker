@@ -684,6 +684,10 @@ class Tracker():
         ## Stage 2: fine fitting   #
         ############################
 
+        # prepare shape code offsets (to be optimized)
+        d_shape = torch.zeros(params['shape'].shape)
+        d_shape = nn.Parameter(d_shape.float().to(self.device))
+
         # prepare expression code offsets (to be optimized)
         d_exp = torch.zeros(params['exp'].shape)
         d_exp = nn.Parameter(d_exp.float().to(self.device))
@@ -696,15 +700,17 @@ class Tracker():
         eye_pose = torch.zeros(1,6) # FLAME's default_eyeball_pose are zeros
         eye_pose = nn.Parameter(eye_pose.float().to(self.device))    
 
-        expr_params = [
+        fine_params = [
             {'params': [d_exp], 'lr': 0.01}, 
             {'params': [d_jaw], 'lr': 0.025},
             {'params': [eye_pose], 'lr': 0.03}
         ]
+        # if shape_code is None:
+        #     fine_params.append({'params': [d_shape], 'lr': 0.01})
 
         # fine optimizer
         e_opt_fine = torch.optim.Adam(
-            expr_params,
+            fine_params,
             weight_decay=0.0001
         )
 
@@ -715,13 +721,13 @@ class Tracker():
             if iter == 100:
                 e_opt_fine.param_groups[0]['lr'] = 0.005    
                 e_opt_fine.param_groups[1]['lr'] = 0.01     
-                e_opt_fine.param_groups[1]['lr'] = 0.01     
+                e_opt_fine.param_groups[2]['lr'] = 0.01     
 
             optimized_exp = exp + d_exp
             optimized_pose = torch.from_numpy(params['pose']).to(self.device).detach()
             optimized_pose[0,:3] *= 0 # we clear FLAME's head pose 
             optimized_pose[:,3:] = optimized_pose[:,3:] + d_jaw
-            vertices, _, _ = self.flame(shape_params=shape, 
+            vertices, _, _ = self.flame(shape_params=shape+d_shape, 
                                         expression_params=optimized_exp, 
                                         pose_params=optimized_pose, 
                                         eye_pose_params=eye_pose) # [1, N, 3]
@@ -748,11 +754,12 @@ class Tracker():
         ## for displaying results    #
         ##############################
         with torch.no_grad():
+            optimized_shape = shape + d_shape
             optimized_exp = exp + d_exp
             optimized_pose = torch.from_numpy(params['pose']).to(self.device).detach()
             optimized_pose[0,:3] *= 0 # we clear FLAME's head pose 
             optimized_pose[:,3:] = optimized_pose[:,3:] + d_jaw # clear head pose and set jaw pose
-            vertices, _, _ = self.flame(shape_params=shape, 
+            vertices, _, _ = self.flame(shape_params=optimized_shape, 
                                         expression_params=optimized_exp, 
                                         pose_params=optimized_pose, 
                                         eye_pose_params=eye_pose)
@@ -797,7 +804,7 @@ class Tracker():
         ####################
         ret_dict = {
             'vertices': vertices[0].detach().cpu().numpy(),  # [N, 3]
-            'shape': params['shape'],
+            'shape': optimized_shape.detach().cpu().numpy(),    # [1,100]
             'exp': optimized_exp.detach().cpu().numpy(),
             'pose': optimized_pose.detach().cpu().numpy(),
             'eye_pose': eye_pose.detach().cpu().numpy(),
@@ -829,7 +836,7 @@ class Tracker():
                 # use pre-estimated global shape code
                 params[key] = shape_code.detach().cpu().numpy()
             elif key in ['shape', 'exp']:
-                    params[key] = deca_dict[key].detach().cpu().numpy() * 0.0 # clear DECA's code
+                params[key] = deca_dict[key].detach().cpu().numpy() * 0.0 # clear DECA's code
             else:
                 params[key] = deca_dict[key].detach().cpu().numpy()
 
