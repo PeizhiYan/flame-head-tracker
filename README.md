@@ -18,11 +18,11 @@
 
 ## Supported Features:
 
-- Choose to use either Mediapipe or FAN face landmark detectors
-- Include face parsing masks
-- Allow adjustable camera FOV (currently support image-based reconstruction only)
-- Support to use detected ear landmarks to improve the alignment
-- Present outputs in an intuitive and easy-to-understand format
+- Mediapipe face landmark detector
+- Ear landmarks
+- Face parsing masks
+- Adjustable camera FOV (currently support image-based reconstruction only)
+- Outputs in easy-to-understand format
 
 | Scenario                        | 🙂 Landmarks-based Fitting  | 🔆 Photometric Fitting  |
 |---------------------------------|-----------------------------|--------------------------|
