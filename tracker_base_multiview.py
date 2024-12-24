@@ -3,7 +3,7 @@
 ## Multi-View Input Images                #
 ## -------------------------------------- #
 ## Author: Peizhi Yan                     #
-## Update: 12/12/2024                     #
+## Update: 12/23/2024                     #
 ###########################################
 
 ## Copyright (C) Peizhi Yan. 2024
@@ -15,6 +15,7 @@ import torch.nn.functional as F
 import torch.nn as nn
 import numpy as np # version 1.23.4, higher version may cause problem
 from tqdm import tqdm
+from scipy.ndimage import gaussian_filter
 
 # Mediapipe  (version 0.10.15)
 import mediapipe as mp
@@ -107,6 +108,14 @@ class Tracker():
             self.use_kalman_filter = False
         self.set_landmark_detector('mediapipe')
 
+        if 'ear_landmarker_path' in tracker_cfg:
+            # use ear landmarks during fitting
+            self.use_ear_landmarks = True
+            self.ear_landmarker = torch.load(tracker_cfg['ear_landmarker_path']).eval() # load the ONNX converted ear landmarker model
+            self.ear_landmarker = self.ear_landmarker.to(self.device)
+        else:
+            self.use_ear_landmarks = False
+
         # Mediapipe face landmark detector
         base_options = python.BaseOptions(model_asset_path=tracker_cfg['mediapipe_face_landmarker_v2_path'])
         options = vision.FaceLandmarkerOptions(base_options=base_options,
@@ -130,6 +139,10 @@ class Tracker():
         self.L_EYE_MP_LMKS = [473, 474, 475, 476, 477]      # left eye mediapipe landmarks
         self.R_EYE_INDICES = [4597, 4543, 4511, 4479, 4575] # right eye FLAME mesh indices
         self.L_EYE_INDICES = [4051, 3997, 3965, 3933, 4020] # left eye FLAME mesh indices
+
+        # Ear Indices (FLAME mesh), labeled following I-Bug Ear's landmarks from 0 to 19
+        self.L_EAR_INDICES = [342, 341, 166, 514, 476, 185, 369, 29, 204, 641, 179, 178, 71, 68, 138, 141, 91, 40, 96, 184]
+        self.R_EAR_INDICES = [1263, 844, 845, 2655, 870, 872, 1207, 523, 901, 1859, 860, 621, 618, 890, 981, 556, 554, 676, 1209, 868]
 
         # Camera settings
         self.H = self.W = self.flame_cfg.cropped_size
@@ -228,6 +241,45 @@ class Tracker():
             # return face landmarks of the first detected face
             return face_landmarks[0] # [68, 2]
 
+
+    def detect_ear_landmarks(self, img):
+        """
+        Run ear landmark detector
+        Note that, the ear landmarks can be either from right or left or both ears.
+        Thus, later when we use them we need to handle these potential scenarios.
+        input:
+            - img: image data   numpy  uint8
+        output:
+            - ear_lmks: 20 ear landmarks   numpy  [20, 2], the locations are in normalized scale (-1.0 ~ 1.0)
+        """
+        EAR_LMK_DETECTOR_INPUT_SIZE = 368
+        input_size = (EAR_LMK_DETECTOR_INPUT_SIZE, EAR_LMK_DETECTOR_INPUT_SIZE)
+
+        # run ear landmark detector model
+        with torch.no_grad():
+            input_image = cv2.resize(img, input_size) # resize the image to match the input size of the model
+            input_image = input_image.astype(np.float32) / 255.0 # convert pixels from 0~255 to 0~1.0
+            input_image = input_image[None] # extend to batch size == 1   [1, 368, 368, 3]
+            input_image_tensor = torch.from_numpy(input_image).to(self.device) # [1, 368, 368, 3]
+            heatmaps = self.ear_landmarker(input_image_tensor)  # [1, 46, 46, 55]
+            heatmaps = heatmaps.detach().cpu().numpy()[0]  # [46, 46, 55]
+
+        # resize headmap back to ear landmarker model's input image size
+        heatmap = cv2.resize(heatmaps, input_size)  # [368, 368, 55] H == W
+        blurred_heatmap = gaussian_filter(heatmap, sigma=2.5) # apply Gaussian blue on the heat map to make landmarks smooth
+
+        # find the maximum indices
+        temp = np.argmax(blurred_heatmap.reshape(-1, 55), axis=0)
+        ear_landmarks = np.zeros([20, 2], dtype=np.float32) # only keep landmarks 0 ~ 19
+        for i in range(20):
+            idx = temp[i]
+            x, y = idx % EAR_LMK_DETECTOR_INPUT_SIZE, idx // EAR_LMK_DETECTOR_INPUT_SIZE
+            ear_landmarks[i, 0] = x
+            ear_landmarks[i, 1] = y
+        ear_landmarks = ear_landmarks / float(EAR_LMK_DETECTOR_INPUT_SIZE) * 2 - 1 # normalize landmarks to -1.0 ~ 1.0
+
+        return ear_landmarks
+    
 
     def load_images_and_run(self, 
                            img_paths, realign=True, photometric_fitting=False, shape_code=None):
@@ -401,6 +453,7 @@ class Tracker():
         # run Mediapipe face detector
         lmks_dense_list = []
         face_landmarks_list = []
+        gt_ear_landmarks_list = []
         for img_resized in imgs_resized:
             lmks_dense, _ = self.mediapipe_face_detection(img_resized)
             if lmks_dense is None:
@@ -422,6 +475,12 @@ class Tracker():
                 face_landmarks = face_landmarks[:, :2] / float(self.flame_cfg.cropped_size) * 2 - 1 # normalize landmarks      
             lmks_dense_list.append(lmks_dense)
             face_landmarks_list.append(face_landmarks)
+    
+            # prepare ear 20 landmarks
+            if self.use_ear_landmarks:
+                ear_landmarks = self.detect_ear_landmarks(img_resized) # [20, 2] normalized ear landmarks
+                gt_ear_landmark = torch.from_numpy(ear_landmarks[None]).float().to(self.device) # [1, 20, 2]
+                gt_ear_landmarks_list.append(gt_ear_landmark)
 
         # prepare ground-truth landmarks
         gt_landmark_list = []
@@ -510,11 +569,31 @@ class Tracker():
                 landmarks3d = self.flame.seletec_3d68(verts_ndc_3d[None]) # [1, 68, 3]
                 landmarks2d = landmarks3d[:,:,:2] / float(self.flame_cfg.cropped_size) * 2 - 1  # [1, 68, 2]
 
+                # ears landmarks
+                EAR_LOSS_THRESHOLD = 0.2
+                loss_ear = 0
+                if self.use_ear_landmarks:
+                    left_ear_landmarks3d = verts_ndc_3d[self.L_EAR_INDICES][None]  # [1, 20, 3]
+                    left_ear_landmarks2d = left_ear_landmarks3d[:,:,:2] / float(self.flame_cfg.cropped_size) * 2 - 1  # [1, 20, 2]
+                    right_ear_landmarks3d = verts_ndc_3d[self.R_EAR_INDICES][None]  # [1, 20, 3]
+                    right_ear_landmarks2d = right_ear_landmarks3d[:,:,:2] / float(self.flame_cfg.cropped_size) * 2 - 1  # [1, 20, 2]
+                    gt_ear_landmark = gt_ear_landmarks_list[i]
+                    loss_l_ear = util.l2_distance(left_ear_landmarks2d, gt_ear_landmark)
+                    loss_r_ear = util.l2_distance(right_ear_landmarks2d, gt_ear_landmark)
+                    #loss_ear = torch.min(loss_l_ear, loss_r_ear) # select the one with the smallest loss
+                    if loss_l_ear < EAR_LOSS_THRESHOLD:
+                        loss_ear = loss_ear + loss_l_ear
+                    if loss_r_ear < EAR_LOSS_THRESHOLD:
+                        loss_ear = loss_ear + loss_r_ear
+                    #print(loss_l_ear, loss_r_ear)
+                loss_ear = loss_ear * 100
+                # print('ear loss:', loss_ear)
+
                 # loss computation and optimization
                 gt_landmark = gt_landmark_tensor[i][None]
                 loss_facial = util.l2_distance(landmarks2d[:, 17:, :2], gt_landmark[:, 17:, :2]) * l_f
                 loss_contour = util.l2_distance(landmarks2d[:, :17, :2], gt_landmark[:, :17, :2]) * l_c # contour loss
-                loss = loss + loss_facial + loss_contour
+                loss = loss + loss_facial + loss_contour + loss_ear
 
             loss = loss / count # average across valid views
             loss.backward()
@@ -572,7 +651,7 @@ class Tracker():
             if iter == 100:
                 e_opt_fine.param_groups[0]['lr'] = 0.005    
                 e_opt_fine.param_groups[1]['lr'] = 0.01     
-                e_opt_fine.param_groups[1]['lr'] = 0.01     
+                e_opt_fine.param_groups[2]['lr'] = 0.01     
 
             # construct the canonical shape
             optimized_exp = exp + d_exp
@@ -611,7 +690,7 @@ class Tracker():
                 # loss computation and optimization
                 loss_facial = util.l2_distance(landmarks2d[:, 17:, :2], gt_landmark[:, 17:, :2]) * 500
                 loss_eyes = util.l2_distance(eyes_landmarks2d, gt_eyes_landmark) * 500
-                loss = loss + loss_facial + loss_eyes
+                loss = loss + loss_facial + loss_eyes 
             loss = loss / count # average across valid views
             loss.backward()
             e_opt_fine.step()
@@ -651,6 +730,8 @@ class Tracker():
                 landmarks2d = landmarks3d[:,:,:2].detach().cpu().numpy() # [1, 68, 2]
                 eyes_landmarks3d = verts_ndc_3d[self.R_EYE_INDICES + self.L_EYE_INDICES][None]  # [1, 10, 3]
                 eyes_landmarks2d = eyes_landmarks3d[:,:,:2].detach().cpu().numpy()  # [1, 10, 2]
+                ears_landmarks3d = verts_ndc_3d[self.R_EAR_INDICES + self.L_EAR_INDICES][None]  # [1, 40, 3]
+                ears_landmarks2d = ears_landmarks3d[:,:,:2].detach().cpu().numpy()  # [1, 40, 2]
                 rendered_mesh_shape = rendered['rgba'][0,...,:3].detach().cpu().numpy()
                 rendered_mesh_shape_img = (img_resized / 255. + rendered_mesh_shape) / 2
                 rendered_mesh_shape_img = np.array(np.clip(rendered_mesh_shape_img * 255, 0, 255), dtype=np.uint8) # uint8
@@ -667,6 +748,12 @@ class Tracker():
                     coords = np.clip(coords, 0, self.H-1).astype(np.uint8)
                     #coords = np.clip((coords / 2 + 1) * self.H, 0, self.H).astype(np.uint8)
                     cv2.circle(rendered_mesh_shape, (coords[0], coords[1]), radius=1, color=(0, 0, 255), thickness=-1)  # Red color, filled circle
+
+                # Optionally draw ear landmarks as pink dots
+                for coords in ears_landmarks2d[0]:
+                    coords = np.clip(coords, 0, self.H-1).astype(np.uint8)
+                    #coords = np.clip((coords / 2 + 1) * self.H, 0, self.H).astype(np.uint8)
+                    cv2.circle(rendered_mesh_shape, (coords[0], coords[1]), radius=1, color=(255, 0, 255), thickness=-1)
 
                 rendered_mesh_shape_img_list.append(rendered_mesh_shape_img)
                 rendered_mesh_shape_list.append(rendered_mesh_shape)
@@ -745,6 +832,7 @@ class Tracker():
         # run face landmarks detector
         lmks_dense_list = []
         face_landmarks_list = []
+        gt_ear_landmarks_list = []
         for img_resized in imgs_resized:
             lmks_dense, _ = self.mediapipe_face_detection(img_resized)
             if lmks_dense is None:
@@ -766,6 +854,12 @@ class Tracker():
                 face_landmarks = face_landmarks[:, :2] / float(self.flame_cfg.cropped_size) * 2 - 1 # normalize landmarks
             lmks_dense_list.append(lmks_dense)
             face_landmarks_list.append(face_landmarks)
+
+            # prepare ear 20 landmarks
+            if self.use_ear_landmarks:
+                ear_landmarks = self.detect_ear_landmarks(img_resized) # [20, 2] normalized ear landmarks
+                gt_ear_landmark = torch.from_numpy(ear_landmarks[None]).float().to(self.device) # [1, 20, 2]
+                gt_ear_landmarks_list.append(gt_ear_landmark)
 
         # prepare ground-truth landmarks
         gt_landmark_list = []
@@ -852,11 +946,30 @@ class Tracker():
                 landmarks3d = self.flame.seletec_3d68(verts_ndc_3d[None]) # [1, 68, 3]
                 landmarks2d = landmarks3d[:,:,:2] / float(self.flame_cfg.cropped_size) * 2 - 1  # [1, 68, 2]
 
+                # ear landmarks loss
+                EAR_LOSS_THRESHOLD = 0.2
+                loss_ear = 0                
+                if self.use_ear_landmarks:
+                    left_ear_landmarks3d = verts_ndc_3d[self.L_EAR_INDICES][None]  # [1, 20, 3]
+                    left_ear_landmarks2d = left_ear_landmarks3d[:,:,:2] / float(self.flame_cfg.cropped_size) * 2 - 1  # [1, 20, 2]
+                    right_ear_landmarks3d = verts_ndc_3d[self.R_EAR_INDICES][None]  # [1, 20, 3]
+                    right_ear_landmarks2d = right_ear_landmarks3d[:,:,:2] / float(self.flame_cfg.cropped_size) * 2 - 1  # [1, 20, 2]
+                    gt_ear_landmark = gt_ear_landmarks_list[i]
+                    loss_l_ear = util.l2_distance(left_ear_landmarks2d, gt_ear_landmark)
+                    loss_r_ear = util.l2_distance(right_ear_landmarks2d, gt_ear_landmark)
+                    #loss_ear = torch.min(loss_l_ear, loss_r_ear) # select the one with the smallest loss
+                    if loss_l_ear < EAR_LOSS_THRESHOLD:
+                        loss_ear = loss_ear + loss_l_ear
+                    if loss_r_ear < EAR_LOSS_THRESHOLD:
+                        loss_ear = loss_ear + loss_r_ear
+                    #print(loss_l_ear, loss_r_ear)
+                loss_ear = loss_ear
+
                 # loss computation and optimization
                 gt_landmark = gt_landmark_tensor[i][None]
                 loss_facial = util.l2_distance(landmarks2d[:, 17:, :2], gt_landmark[:, 17:, :2]) #* l_f
                 loss_contour = util.l2_distance(landmarks2d[:, :17, :2], gt_landmark[:, :17, :2]) #* l_c # contour loss
-                loss = loss + loss_facial + loss_contour
+                loss = loss + loss_facial + loss_contour + loss_ear
 
             loss = loss / count # average across valid views
             loss.backward()
@@ -957,6 +1070,25 @@ class Tracker():
                 eyes_landmarks3d = verts_ndc_3d[self.R_EYE_INDICES + self.L_EYE_INDICES][None]  # [1, 10, 3]
                 eyes_landmarks2d = eyes_landmarks3d[:,:,:2] / float(self.flame_cfg.cropped_size) * 2 - 1  # [1, 10, 2]
 
+                # ears landmarks
+                EAR_LOSS_THRESHOLD = 0.2
+                loss_ear = 0
+                if self.use_ear_landmarks:
+                    left_ear_landmarks3d = verts_ndc_3d[self.L_EAR_INDICES][None]  # [1, 20, 3]
+                    left_ear_landmarks2d = left_ear_landmarks3d[:,:,:2] / float(self.flame_cfg.cropped_size) * 2 - 1  # [1, 20, 2]
+                    right_ear_landmarks3d = verts_ndc_3d[self.R_EAR_INDICES][None]  # [1, 20, 3]
+                    right_ear_landmarks2d = right_ear_landmarks3d[:,:,:2] / float(self.flame_cfg.cropped_size) * 2 - 1  # [1, 20, 2]
+                    gt_ear_landmark = gt_ear_landmarks_list[i]
+                    loss_l_ear = util.l2_distance(left_ear_landmarks2d, gt_ear_landmark)
+                    loss_r_ear = util.l2_distance(right_ear_landmarks2d, gt_ear_landmark)
+                    #loss_ear = torch.min(loss_l_ear, loss_r_ear) # select the one with the smallest loss
+                    if loss_l_ear < EAR_LOSS_THRESHOLD:
+                        loss_ear = loss_ear + loss_l_ear
+                    if loss_r_ear < EAR_LOSS_THRESHOLD:
+                        loss_ear = loss_ear + loss_r_ear
+                    #print(loss_l_ear, loss_r_ear)
+                loss_ear = loss_ear * 1.0
+
                 # render textured mesh (using PyTorch3D's renderer)
                 verts_transformed = verts_clip[...,:3]
                 verts_transformed = verts_transformed[..., :3] / (verts_clip[...,3:4] + 1e-8) # perspective division
@@ -974,7 +1106,7 @@ class Tracker():
                 loss_reg_exp = (torch.sum((exp + d_exp) ** 2) / 2) * 1e-4 # 1e-3
                 #loss_reg_tex = (torch.sum((tex + d_tex) ** 2) / 2) * 1e-5 # 1e-4
                 loss_reg = loss_reg_shape + loss_reg_exp #+ loss_reg_tex
-                loss = loss_photo + loss_facial + loss_contour + loss_eyes + loss_reg
+                loss = loss_photo + loss_facial + loss_contour + loss_eyes + loss_ear + loss_reg
             loss = loss / count # average across valid views
             loss.backward()
             e_opt_fine.step()
@@ -1030,6 +1162,8 @@ class Tracker():
                 landmarks2d = landmarks3d[:,:,:2].detach().cpu().numpy() # [1, 68, 2]
                 eyes_landmarks3d = verts_ndc_3d[self.R_EYE_INDICES + self.L_EYE_INDICES][None]  # [1, 10, 3]
                 eyes_landmarks2d = eyes_landmarks3d[:,:,:2].detach().cpu().numpy()  # [1, 10, 2]
+                ears_landmarks3d = verts_ndc_3d[self.R_EAR_INDICES + self.L_EAR_INDICES][None]  # [1, 40, 3]
+                ears_landmarks2d = ears_landmarks3d[:,:,:2].detach().cpu().numpy()  # [1, 40, 2]
                 rendered_mesh_shape = rendered['rgba'][0,...,:3].detach().cpu().numpy()
                 rendered_mesh_shape = np.array(np.clip(rendered_mesh_shape * 255, 0, 255), dtype=np.uint8) # uint8
 
@@ -1055,6 +1189,12 @@ class Tracker():
                     coords = np.clip(coords, 0, self.H-1).astype(np.uint8)
                     #coords = np.clip((coords / 2 + 1) * self.H, 0, self.H).astype(np.uint8)
                     cv2.circle(rendered_mesh_shape, (coords[0], coords[1]), radius=1, color=(0, 0, 255), thickness=-1)  # Red color, filled circle
+
+                # Optionally draw ear landmarks as pink dots
+                for coords in ears_landmarks2d[0]:
+                    coords = np.clip(coords, 0, self.H-1).astype(np.uint8)
+                    #coords = np.clip((coords / 2 + 1) * self.H, 0, self.H).astype(np.uint8)
+                    cv2.circle(rendered_mesh_shape, (coords[0], coords[1]), radius=1, color=(255, 0, 255), thickness=-1)
 
                 rendered_mesh_shape_img_list.append(rendered_mesh_shape_img)
                 rendered_mesh_shape_list.append(rendered_mesh_shape)

@@ -13,7 +13,7 @@
 </div>
 
 **Date Updated**: 12-23-2024  
-**Version**: 3.01
+**Version**: 3.1
 
 
 ## Supported Features:
