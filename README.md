@@ -7,12 +7,12 @@
 </div>
 
 <div align="center"> 
-  <b><img src="./assets/demo.gif" alt="drawing" width="600"/></b>
+  <b><img src="./assets/demo-new.gif" alt="drawing" width="600"/></b>
   <br>
-  (First two example videos were from IMavatar: <a href="https://github.com/zhengyuf/IMavatar">https://github.com/zhengyuf/IMavatar</a>)
+  (First two example videos were from IMavatar: <a href="https://github.com/zhengyuf/IMavatar">https://github.com/zhengyuf/IMavatar</a><br><span style='color:lime'>Green Dots</span>: 68 Face Landmarks; <span style='color:blue'>Blue Dots</span>: 10 Eye Landmarks; <span style='color:magenta'>Pink Dots</span>: 40 Ear Landmarks.)
 </div>
 
-**Date Updated**: 12-23-2024  
+**Date Updated**: 12-26-2024 🎅
 **Version**: 3.1
 
 
@@ -29,6 +29,7 @@
 | 📷 Single-Image Reconstruction | ✅ Yes | ✅ Yes |
 | 📸 Multi-View Reconstruction   | ✅ Yes | ✅ Yes |
 | 🎥 Monocular Video Tracking    | ✅ Yes | Not support yet |
+
 
 
 ---
@@ -83,8 +84,10 @@ tracker_cfg = {
 
 tracker = Tracker(tracker_cfg)
 
-tracker.update_fov(fov=20)           # optional setting
-tracker.set_landmark_detector('FAN') # optional setting
+tracker.update_fov(fov=20)                 # optional setting
+#tracker.update_fov(fov=50)                # optional setting (better for selfie images)
+#tracker.set_landmark_detector('FAN')      # optional setting
+tracker.set_landmark_detector('mediapipe') # optional setting
 
 
 ret_dict = tracker.load_image_and_run(img_path, realign=True, photometric_fitting=False)
