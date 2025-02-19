@@ -2,6 +2,10 @@ MIT License
 
 Copyright (c) 2024 Peizhi Yan (Matthew)
 
+This repository is licensed under the MIT license, but it contains dependencies 
+(such as DECA) that are subject to their own license terms. Use of those 
+dependencies must comply with their respective licenses.
+
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
