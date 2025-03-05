@@ -43,11 +43,13 @@
 This code was originally used for "Gaussian Deja-vu" (accepted for WACV 2025 in Round 1). Please consider citing our work if you find this code useful.
 
 ```bibtex
-@article{yan2024gaussian,
-  title={Gaussian Deja-vu: Creating Controllable 3D Gaussian Head-Avatars with Enhanced Generalization and Personalization Abilities},
-  author={Yan, Peizhi and Ward, Rabab and Tang, Qiang and Du, Shan},
-  journal={arXiv preprint arXiv:2409.16147},
-  year={2024}
+@InProceedings{Yan_2025_WACV,
+    author    = {Yan, Peizhi and Ward, Rabab and Tang, Qiang and Du, Shan},
+    title     = {Gaussian Deja-vu: Creating Controllable 3D Gaussian Head-Avatars with Enhanced Generalization and Personalization Abilities},
+    booktitle = {Proceedings of the Winter Conference on Applications of Computer Vision (WACV)},
+    month     = {February},
+    year      = {2025},
+    pages     = {276-286}
 }
 ```
 
