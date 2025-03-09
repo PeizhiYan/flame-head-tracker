@@ -12,7 +12,7 @@
   (First two example videos were from IMavatar: <a href="https://github.com/zhengyuf/IMavatar">https://github.com/zhengyuf/IMavatar</a><br><span style='color:lime'>Green Dots</span>: 68 Face Landmarks; <span style='color:blue'>Blue Dots</span>: 10 Eye Landmarks; <span style='color:magenta'>Pink Dots</span>: 40 Ear Landmarks.)
 </div>
 
-**Date Updated**: 12-26-2024 🎅
+**Last Major Update**: 12-26-2024 🎅
 **Version**: 3.1
 
 
@@ -76,7 +76,6 @@ tracker_cfg = {
     'ear_landmarker_path': './models/ear_landmarker.pth', # this is optional, if you do not want to use ear landmarks during fitting, just remove this line
     'tex_space_path': './models/FLAME_albedo_from_BFM.npz',
     'face_parsing_model_path': './utils/face_parsing/79999_iter.pth',
-    'uv_coord_mapping_file_path': './models/uv2vert_256.npy',
     'template_mesh_file_path': './models/head_template.obj',
     'result_img_size': 512,
     'device': device,
@@ -201,7 +200,6 @@ tracker_cfg = {
     'ear_landmarker_path': './models/ear_landmarker.pth', # this is optional, if you do not want to use ear landmarks during fitting, just remove this line
     'tex_space_path': './models/FLAME_albedo_from_BFM.npz',
     'face_parsing_model_path': './utils/face_parsing/79999_iter.pth',
-    'uv_coord_mapping_file_path': './models/uv2vert_256.npy',
     'template_mesh_file_path': './models/head_template.obj',
     'result_img_size': 512,
     'device': device,
