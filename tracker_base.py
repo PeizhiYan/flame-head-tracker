@@ -363,6 +363,9 @@ class Tracker():
             # run facial landmark-based fitting
             ret_dict = self.run_fitting(img, deca_dict, prev_ret_dict, shape_code)
 
+        if ret_dict is None:
+            return None
+
         # check for NaNs, if there is any, return None
         _, nan_status = check_nan_in_dict(ret_dict)
         if nan_status:
