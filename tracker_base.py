@@ -79,7 +79,7 @@ class Tracker():
             'tex_type': 'BFM',
             'camera_params': 3,          # do not change it
             'shape_params': 100,
-            'expression_params': 50,     # we use the first 50 FLAME expression coefficients
+            'expression_params': 100,    # by default, we use 100 FLAME expression coefficients (should be >= 50 and <= 100)
             'pose_params': 6,
             'tex_params': 50,            # we use the first 50 FLAME texture model coefficients
             'use_face_contour': False,   # we don't use the face countour landmarks
@@ -106,6 +106,8 @@ class Tracker():
         else:
             self.use_kalman_filter = False
         self.set_landmark_detector('mediapipe') # use Mediapipe as default face landmark detector
+
+        self.num_expr_coeffs = flame_cfg['expression_params'] # number of expression coefficients
 
         if 'ear_landmarker_path' in tracker_cfg:
             # use ear landmarks during fitting
@@ -589,6 +591,9 @@ class Tracker():
         
         # DECA's results
         shape = torch.from_numpy(params['shape']).to(self.device).detach()
+        _exp_ = np.zeros([1, self.num_expr_coeffs], dtype=np.float32)
+        _exp_[:,:params['exp'].shape[1]] = params['exp']   # extend the expression coefficients to the full length
+        params['exp'] = _exp_ 
         exp = torch.from_numpy(params['exp']).to(self.device).detach()
         pose = torch.from_numpy(params['pose']).to(self.device).detach()
         pose[0,:3] *= 0 # we clear FLAME's head pose (we use camera pose instead)
@@ -748,7 +753,7 @@ class Tracker():
             # loss computation and optimization
             loss_facial = util.l2_distance(landmarks2d[:, 17:, :2], gt_landmark[:, 17:, :2]) * 500
             loss_eyes = util.l2_distance(eyes_landmarks2d, gt_eyes_landmark) * 500
-            loss_reg_exp = torch.sum(optimized_exp**2) * 1.0 # regularization on expression coefficients
+            loss_reg_exp = torch.sum(optimized_exp**2) * 0.025 # regularization on expression coefficients
             loss = loss_facial + loss_eyes + loss_reg_exp
             e_opt_fine.zero_grad()
             loss.backward()
@@ -807,9 +812,9 @@ class Tracker():
         # Prepare results  #
         ####################
         ret_dict = {
-            'vertices': vertices[0].detach().cpu().numpy(),  # [N, 3]
+            'vertices': vertices[0].detach().cpu().numpy(),     # [N, 3]
             'shape': optimized_shape.detach().cpu().numpy(),    # [1,100]
-            'exp': optimized_exp.detach().cpu().numpy(),
+            'exp': optimized_exp.detach().cpu().numpy(),        # [1,100]
             'pose': optimized_pose.detach().cpu().numpy(),
             'eye_pose': eye_pose.detach().cpu().numpy(),
             'tex': params['tex'],
@@ -908,6 +913,9 @@ class Tracker():
         # DECA's results
         shape = torch.from_numpy(params['shape']).to(self.device).detach()
         tex = torch.from_numpy(params['tex']).to(self.device).detach()
+        _exp_ = np.zeros([1, self.num_expr_coeffs], dtype=np.float32)
+        _exp_[:,:params['exp'].shape[1]] = params['exp']   # extend the expression coefficients to the full length
+        params['exp'] = _exp_ 
         exp = torch.from_numpy(params['exp']).to(self.device).detach()
         light = torch.from_numpy(params['light']).to(self.device).detach()
         pose = torch.from_numpy(params['pose']).to(self.device).detach()
@@ -1176,14 +1184,14 @@ class Tracker():
         # Prepare results  #
         ####################
         ret_dict = {
-            'vertices': vertices[0].detach().cpu().numpy(),  # [N, 3]
-            'shape': (shape + d_shape).detach().cpu().numpy(),
-            'exp': (exp + d_exp).detach().cpu().numpy(),
-            'pose': optimized_pose.detach().cpu().numpy(),
-            'eye_pose': eye_pose.detach().cpu().numpy(),
-            'tex': (tex + d_tex).detach().cpu().numpy(),
+            'vertices': vertices[0].detach().cpu().numpy(),           # [N, 3]
+            'shape': (shape + d_shape).detach().cpu().numpy(),        # [1, 100]
+            'exp': (exp + d_exp).detach().cpu().numpy(),              # [1, 100]
+            'pose': optimized_pose.detach().cpu().numpy(),            # [1, 6]
+            'eye_pose': eye_pose.detach().cpu().numpy(),              # [1, 6]
+            'tex': (tex + d_tex).detach().cpu().numpy(),              # [1, 50]
             'light': (light + d_light).detach().cpu().numpy(),
-            'cam': optimized_camera_pose.detach().cpu().numpy(), # [6]
+            'cam': optimized_camera_pose.detach().cpu().numpy(),      # [6]
             'img_rendered': rendered_mesh_shape_img,
             'mesh_rendered': rendered_mesh_shape,
         }

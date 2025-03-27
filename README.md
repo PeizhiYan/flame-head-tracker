@@ -12,8 +12,8 @@
   (First two example videos were from IMavatar: <a href="https://github.com/zhengyuf/IMavatar">https://github.com/zhengyuf/IMavatar</a><br><span style='color:lime'>Green Dots</span>: 68 Face Landmarks; <span style='color:blue'>Blue Dots</span>: 10 Eye Landmarks; <span style='color:magenta'>Pink Dots</span>: 40 Ear Landmarks.)
 </div>
 
-**Last Major Update**: 12-26-2024 🎅
-**Version**: 3.1.1
+**Last Major Update**: Dec.-26-2024 🎅
+**Version**: 3.2 (March-27-2025)
 
 
 ## Supported Features:
@@ -100,7 +100,7 @@ The result ```ret_dict``` contains the following data:
   The reconstructed FLAME mesh vertices (including expression).  
 - **shape** `(1, 100)`  
   The FLAME shape code.  
-- **exp** `(1, 50)`  
+- **exp** `(1, 100)`  
   The FLAME expression code.  
 - **pose** `(1, 6)`  
   The FLAME head (first 3 values) and jaw (last 3 values) poses.  
@@ -158,7 +158,7 @@ The result ```ret_dict``` contains the following data:
   The reconstructed canonical FLAME mesh vertices (including expression).  
 - **shape** `(1, 100)`  
   The FLAME canonical shape code.  
-- **exp** `(1, 50)`  
+- **exp** `(1, 100)`  
   The FLAME canonical expression code.  
 - **pose** `(1, 6)`  
   The FLAME canonical head (first 3 values) and jaw (last 3 values) poses.  
@@ -394,6 +394,22 @@ The final structure of ```./models/``` is:
 
 
 
+
+## Troubleshoot
+
+<details>
+<summary><b>Cuda error (with Nvdiffrast)</b></summary>
+  <b>If you observe error message like the following:</b>
+  <p>
+    File "/home/peizhi/miniconda3/envs/tracker/lib/python3.10/site-packages/nvdiffrast/torch/ops.py", line 246, in forward
+      out, out_db = _get_plugin(gl=True).rasterize_fwd_gl(raster_ctx.cpp_wrapper, pos, tri, resolution, ranges, peeling_idx)
+    RuntimeError: Cuda error: 219[cudaGraphicsGLRegisterBuffer(&s.cudaPosBuffer, s.glPosBuffer, cudaGraphicsRegisterFlagsWriteDiscard);]
+  </p>
+  <p>
+    <b>Potential Solution:</b>
+    Your system might have multiple CUDA GPUs. In that case, try changing the GPU device specified in your code to see if it resolves the problem. For example, if you originally set <i>device='cuda:0'</i> and encountered the error, try setting it to <i>device='cuda:1'</i> instead.
+  </p>
+</details>
 
 
 
