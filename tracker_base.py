@@ -748,7 +748,8 @@ class Tracker():
             # loss computation and optimization
             loss_facial = util.l2_distance(landmarks2d[:, 17:, :2], gt_landmark[:, 17:, :2]) * 500
             loss_eyes = util.l2_distance(eyes_landmarks2d, gt_eyes_landmark) * 500
-            loss = loss_facial + loss_eyes
+            loss_reg_exp = torch.sum(optimized_exp**2) * 1.0 # regularization on expression coefficients
+            loss = loss_facial + loss_eyes + loss_reg_exp
             e_opt_fine.zero_grad()
             loss.backward()
             e_opt_fine.step()

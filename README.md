@@ -13,7 +13,7 @@
 </div>
 
 **Last Major Update**: 12-26-2024 🎅
-**Version**: 3.1
+**Version**: 3.1.1
 
 
 ## Supported Features:
