@@ -464,5 +464,8 @@ Our code can be used for research purposes, **provided that the terms of the lic
 </details>
 
 
+## Star History
 
-
+<a href="https://www.star-history.com/#PeizhiYan/flame-head-tracker&Date">
+  <img src="https://api.star-history.com/svg?repos=PeizhiYan/flame-head-tracker&type=Date" width="400"/>
+</a>
