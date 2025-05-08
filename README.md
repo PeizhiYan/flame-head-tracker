@@ -467,7 +467,7 @@ Our code can be used for research purposes, **provided that the terms of the lic
 ## Star History
 
 <div align="center">
-  <a href="https://www.star-history.com/#PeizhiYan/flame-head-tracker&PeizhiYan/gaussian-dejavu&PeizhiYan/Mediapipe_2_Dlib_Landmarks&PeizhiYan/mediapipe-blendshapes-to-flame&Date">
-    <img src="https://api.star-history.com/svg?repos=PeizhiYan/flame-head-tracker,PeizhiYan/gaussian-dejavu,PeizhiYan/Mediapipe_2_Dlib_Landmarks,PeizhiYan/mediapipe-blendshapes-to-flame&type=Date" width="500"/>
+  <a href="https://www.star-history.com/#PeizhiYan/flame-head-tracker&Date">
+    <img src="https://api.star-history.com/svg?repos=PeizhiYan/flame-head-tracker&type=Date" width="500"/>
   </a>
 </div>
