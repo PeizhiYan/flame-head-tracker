@@ -22,13 +22,13 @@ output/
 # ignore example image and video
 assets/00000.png
 assets/00012.png
-assets/FFHQ/
 assets/IMG_2647.MOV
 
 # ignore licensed model files
 models/FLAME2020/
 models/deca_model.tar
-models/face_landmarker_v2_with_blendshapes.task
+models/mica.tar
+models/face_landmarker.task
 models/fixed_displacement_256.npy
 models/FLAME_albedo_from_BFM.npz
 models/FLAME_texture.npz

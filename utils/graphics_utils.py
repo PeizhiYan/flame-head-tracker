@@ -1,270 +1,141 @@
 #
-# Copyright (C) 2023, Inria
-# GRAPHDECO research group, https://team.inria.fr/graphdeco
-# All rights reserved.
-#
-# This software is free for non-commercial, research and evaluation use 
-# under the terms of the LICENSE.md file.
-#
-# For inquiries contact  george.drettakis@inria.fr
-#
-
-#
-# Updated by Peizhi Yan
-# Copyright (C) 2024
-# 
-# Updates:
-#  1) Added LitePointCloud class
-#  2) Added create_diff_world_to_view_matrix function
-#  3) Added getProjectionMatrix2 function
-#  4) Added verts_clip_to_ndc function
-#  5) Added fov_to_focal
+# Peizhi Yan
+# Copyright (C) 2025
 #
 
 import torch
 import math
 import numpy as np
-from typing import NamedTuple
-
-class BasicPointCloud(NamedTuple):
-    points : np.array
-    colors : np.array
-    normals : np.array
-
-def geom_transform_points(points, transf_matrix):
-    P, _ = points.shape
-    ones = torch.ones(P, 1, dtype=points.dtype, device=points.device)
-    points_hom = torch.cat([points, ones], dim=1)
-    points_out = torch.matmul(points_hom, transf_matrix.unsqueeze(0))
-
-    denom = points_out[..., 3:] + 0.0000001
-    return (points_out[..., :3] / denom).squeeze(dim=0)
-
-def getWorld2View(R, t):
-    Rt = np.zeros((4, 4))
-    Rt[:3, :3] = R.transpose()
-    Rt[:3, 3] = t
-    Rt[3, 3] = 1.0
-    return np.float32(Rt)
-
-def getWorld2View2(R, t, translate=np.array([.0, .0, .0]), scale=1.0):
-    Rt = np.zeros((4, 4))
-    Rt[:3, :3] = R.transpose()
-    Rt[:3, 3] = t
-    Rt[3, 3] = 1.0
-
-    C2W = np.linalg.inv(Rt)
-    cam_center = C2W[:3, 3]
-    cam_center = (cam_center + translate) * scale
-    C2W[:3, 3] = cam_center
-    Rt = np.linalg.inv(C2W)
-    return np.float32(Rt)
-
-def getProjectionMatrix(znear, zfar, fovX, fovY):
-    tanHalfFovY = math.tan((fovY / 2))
-    tanHalfFovX = math.tan((fovX / 2))
-
-    top = tanHalfFovY * znear
-    bottom = -top
-    right = tanHalfFovX * znear
-    left = -right
-
-    P = torch.zeros(4, 4)
-
-    z_sign = 1.0
-
-    P[0, 0] = 2.0 * znear / (right - left)
-    P[1, 1] = 2.0 * znear / (top - bottom)
-    P[0, 2] = (right + left) / (right - left)
-    P[1, 2] = (top + bottom) / (top - bottom)
-    P[3, 2] = z_sign
-    P[2, 2] = z_sign * zfar / (zfar - znear)
-    P[2, 3] = -(zfar * znear) / (zfar - znear)
-    return P
-
-def fov2focal(fov, pixels):
-    return pixels / (2 * math.tan(fov / 2))
-
-def focal2fov(focal, pixels):
-    return 2*math.atan(pixels/(2*focal))
-
-def fov_to_focal(fov, sensor_size):
-    # based on FOV and Sensor Size, compute focal length
-    # fov : in degrees
-    fov_ = math.radians(fov) # convert to radians
-    return sensor_size / (2.0 * math.tan(fov_ / 2.0))
-
-
-# Copyright (c) 2020-2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved. 
-#
-# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
-# property and proprietary rights in and to this material, related
-# documentation and any modifications thereto. Any use, reproduction, 
-# disclosure or distribution of this material and related documentation 
-# without an express license agreement from NVIDIA CORPORATION or 
-# its affiliates is strictly prohibited.
-
-
-def dot(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-    return torch.sum(x*y, -1, keepdim=True)
-
-def reflect(x: torch.Tensor, n: torch.Tensor) -> torch.Tensor:
-    return 2*dot(x, n)*n - x
-
-def length(x: torch.Tensor, eps: float =1e-20) -> torch.Tensor:
-    return torch.sqrt(torch.clamp(dot(x,x), min=eps)) # Clamp to avoid nan gradients because grad(sqrt(0)) = NaN
-
-def safe_normalize(x: torch.Tensor, eps: float =1e-20) -> torch.Tensor:
-    return x / length(x, eps)
-
-def to_hvec(x: torch.Tensor, w: float) -> torch.Tensor:
-    return torch.nn.functional.pad(x, pad=(0,1), mode='constant', value=w)
-
-def compute_face_normals(verts, faces):
-    i0 = faces[..., 0].long()
-    i1 = faces[..., 1].long()
-    i2 = faces[..., 2].long()
-
-    v0 = verts[..., i0, :]
-    v1 = verts[..., i1, :]
-    v2 = verts[..., i2, :]
-    face_normals = torch.cross(v1 - v0, v2 - v0)
-    return face_normals
-
-def compute_face_orientation(verts, faces, return_scale=False):
-    i0 = faces[..., 0].long()
-    i1 = faces[..., 1].long()
-    i2 = faces[..., 2].long()
-
-    v0 = verts[..., i0, :]
-    v1 = verts[..., i1, :]
-    v2 = verts[..., i2, :]
-
-    a0 = safe_normalize(v1 - v0)
-    a1 = safe_normalize(torch.cross(a0, v2 - v0))
-    a2 = -safe_normalize(torch.cross(a1, a0))  # will have artifacts without negation
-
-    orientation = torch.cat([a0[..., None], a1[..., None], a2[..., None]], dim=-1)
-
-    if return_scale:
-        s0 = length(v1 - v0)
-        s1 = dot(a2, (v2 - v0)).abs()
-        scale = (s0 + s1) / 2
-    return orientation, scale
+import cv2
 
 def compute_vertex_normals(verts, faces):
-    i0 = faces[..., 0].long()
-    i1 = faces[..., 1].long()
-    i2 = faces[..., 2].long()
+    # verts: [V, 3]
+    # faces: [F, 3]
+    v0 = verts[faces[:, 0]]
+    v1 = verts[faces[:, 1]]
+    v2 = verts[faces[:, 2]]
+    face_normals = torch.cross(v1 - v0, v2 - v0)  # [F, 3]
+    face_normals = face_normals / (face_normals.norm(dim=-1, keepdim=True) + 1e-8)
+    # Accumulate per-vertex normals
+    normals = torch.zeros_like(verts)
+    normals.index_add_(0, faces[:, 0], face_normals)
+    normals.index_add_(0, faces[:, 1], face_normals)
+    normals.index_add_(0, faces[:, 2], face_normals)
+    normals = normals / (normals.norm(dim=-1, keepdim=True) + 1e-8)
+    return normals
 
-    v0 = verts[..., i0, :]
-    v1 = verts[..., i1, :]
-    v2 = verts[..., i2, :]
-    face_normals = torch.cross(v1 - v0, v2 - v0) # the cross product of two vectors is perpendicular to them
-    v_normals = torch.zeros_like(verts)
-    N = verts.shape[0]
-    v_normals.scatter_add_(1, i0[..., None].repeat(N, 1, 3), face_normals)
-    v_normals.scatter_add_(1, i1[..., None].repeat(N, 1, 3), face_normals)
-    v_normals.scatter_add_(1, i2[..., None].repeat(N, 1, 3), face_normals)
+def euler_to_matrix(yaw, pitch, roll):
+    """Convert yaw, pitch, roll to a rotation matrix (B, 3, 3)"""
+    cy, sy = torch.cos(yaw), torch.sin(yaw)
+    cp, sp = torch.cos(pitch), torch.sin(pitch)
+    cr, sr = torch.cos(roll), torch.sin(roll)
+    zeros = torch.zeros_like(cy)
+    ones = torch.ones_like(cy)
+    Rz = torch.stack([
+        torch.stack([cr, -sr, zeros], dim=-1),
+        torch.stack([sr, cr, zeros], dim=-1),
+        torch.stack([zeros, zeros, ones], dim=-1)
+    ], dim=-2)
+    Ry = torch.stack([
+        torch.stack([cy, zeros, sy], dim=-1),
+        torch.stack([zeros, ones, zeros], dim=-1),
+        torch.stack([-sy, zeros, cy], dim=-1)
+    ], dim=-2)
+    Rx = torch.stack([
+        torch.stack([ones, zeros, zeros], dim=-1),
+        torch.stack([zeros, cp, -sp], dim=-1),
+        torch.stack([zeros, sp, cp], dim=-1)
+    ], dim=-2)
+    return Rz @ Ry @ Rx
 
-    v_normals = torch.where(dot(v_normals, v_normals) > 1e-20, v_normals, torch.tensor([0.0, 0.0, 1.0], dtype=torch.float32, device='cuda'))
-    v_normals = safe_normalize(v_normals)
-    if torch.is_anomaly_enabled():
-        assert torch.all(torch.isfinite(v_normals))
-    return v_normals
+def build_view_matrix(camera_pose):
+    """Build [B, 4, 4] world-to-view matrix from [B, 6] pose"""
+    B = camera_pose.shape[0]
+    yaw, pitch, roll = camera_pose[:, 0], camera_pose[:, 1], camera_pose[:, 2]
+    tx, ty, tz = camera_pose[:, 3], camera_pose[:, 4], camera_pose[:, 5]
+    R = euler_to_matrix(yaw, pitch, roll)
+    #T = torch.stack([tx, ty, tz], dim=-1).unsqueeze(-1)  # [B, 3, 1]
+    Rt = torch.eye(4, device=camera_pose.device, dtype=torch.float32).unsqueeze(0).repeat(B, 1, 1)
+    Rt[:, :3, :3] = R
+    Rt[:, :3, 3] = torch.stack([tx, ty, tz], dim=-1)
+    return Rt  # [B, 4, 4]
 
+def fov_to_focal(fov, sensor_size):
+    fov_rad = math.radians(fov)
+    focal_length = 0.5 * sensor_size / math.tan(0.5 * fov_rad)
+    return focal_length
 
+def build_intrinsics(batch_size, image_size, focal_length, device='cuda'):
+    H = W = image_size
+    fx = fy = focal_length
+    cx = W / 2.0
+    cy = H / 2.0
+    K = torch.tensor([
+        [fx, 0, cx],
+        [0, fy, cy],
+        [0, 0, 1.0]
+    ], dtype=torch.float32, device=device)
+    K = K.unsqueeze(0).expand(batch_size, -1, -1).clone()
+    return K
 
-
-
-# Copyright (c) 2024 DejaVu Authors. All rights reserved. 
-#
-# The University of British Columbia, its affiliates and licensors 
-# retain all intellectual property and proprietary rights in and to 
-# this material, related documentation and any modifications thereto. 
-
-class LitePointCloud():
-    ## Peizhi: the classic point cloud only has points and their colors
-    def __init__(self, points: np.array, colors: np.array = None):
-        self.points = points
-        self.colors = colors
-
-def getProjectionMatrix2(image_height, image_width, fovy, znear, zfar, flip_y: bool=False, z_sign=-1):
-    # Peizhi
-    # based on viewer_utils.py: projection_from_intrinsics
-    w = image_width
-    h = image_height
-    focal = image_height / (2 * math.tan(np.radians(fovy) / 2))
-    fx = fy = focal
-    cx = image_width // 2
-    cy = image_height // 2
-    proj = np.zeros([1, 4, 4], dtype=np.float32)
-    proj[:, 0, 0]  = fx * 2 / w 
-    proj[:, 1, 1]  = fy * 2 / h
-    proj[:, 0, 2]  = (w - 2 * cx) / w
-    proj[:, 1, 2]  = (h - 2 * cy) / h
-    proj[:, 2, 2]  = z_sign * (zfar+znear) / (zfar-znear)
-    proj[:, 2, 3]  = -2*zfar*znear / (zfar-znear)
-    proj[:, 3, 2]  = z_sign
-    if flip_y:
-        proj[:, 1, 1] *= -1
+def projection_from_intrinsics(K, image_size, z_near=0.1, z_far=10.0, z_sign=1):
+    B = K.shape[0]
+    h = w = image_size
+    fx = K[..., 0, 0]
+    fy = K[..., 1, 1]
+    cx = K[..., 0, 2]
+    cy = K[..., 1, 2]
+    proj = torch.zeros((B, 4, 4), device=K.device, dtype=K.dtype)
+    proj[:, 0, 0] = 2 * fx / w
+    proj[:, 1, 1] = 2 * fy / h
+    proj[:, 0, 2] = (w - 2 * cx) / w
+    proj[:, 1, 2] = (h - 2 * cy) / h
+    proj[:, 2, 2] = z_sign * (z_far + z_near) / (z_far - z_near)
+    proj[:, 2, 3] = -2 * z_far * z_near / (z_far - z_near)
+    proj[:, 3, 2] = z_sign
     return proj
 
+def batch_perspective_projection(verts, camera_pose, K, image_size, near=0.1, far=10.0):
+    """
+        - verts: [B, V, 3]
+        - camera_pose: [B, 6]
+        - K: [B, 3, 3] or [1, 3, 3]
+    """
+    B = verts.shape[0]
+    device = verts.device
 
-def create_diff_world_to_view_matrix(cam_pose):
-    # Author: Peizhi Yan
-    # Date: Mar. 12, 2024
-    # Description:
-    #   Takes the camera pose tensor of shape [yaw, pitch, roll, dx, dy, dz] as input
-    #   Computes the World2View matrix Rt: [4,4]
-    #   This process is differentiable.
-    #   Note that the camera pose are represented in radians
-    device = cam_pose.device
-    yaw, pitch, roll = cam_pose[:3]   # Unpack to yaw, pitch, roll
+    # uild world-to-view matrix
+    Rt = build_view_matrix(camera_pose)   # [B, 4, 4]
+    Rt[:, :, [1,2]] *= -1                 # OpenCV: flip y, z
+    world2view = torch.linalg.inv(Rt)     # [B, 4, 4]
 
-    # Rotation matrix for yaw (around the y-axis)
-    Ry = torch.stack([
-        torch.stack([torch.cos(yaw), torch.tensor(0., device=device), torch.sin(yaw)]),
-        torch.stack([torch.tensor(0., device=device), torch.tensor(1., device=device), torch.tensor(0., device=device)]),
-        torch.stack([-torch.sin(yaw), torch.tensor(0., device=device), torch.cos(yaw)])
-    ]).to(device)
+    # Build projection matrix
+    proj = projection_from_intrinsics(K, image_size, near, far, z_sign=1) # [B, 4, 4] or [1, 4, 4]
 
-    # Rotation matrix for pitch (around the x-axis)
-    Rx = torch.stack([
-        torch.stack([torch.tensor(1., device=device), torch.tensor(0., device=device), torch.tensor(0., device=device)]),
-        torch.stack([torch.tensor(0., device=device), torch.cos(pitch), -torch.sin(pitch)]),
-        torch.stack([torch.tensor(0., device=device), torch.sin(pitch), torch.cos(pitch)])
-    ]).to(device)
-
-    # Rotation matrix for roll (around the z-axis)
-    Rz = torch.stack([
-        torch.stack([torch.cos(roll), -torch.sin(roll), torch.tensor(0., device=device)]),
-        torch.stack([torch.sin(roll), torch.cos(roll), torch.tensor(0., device=device)]),
-        torch.stack([torch.tensor(0., device=device), torch.tensor(0., device=device), torch.tensor(1., device=device)])
-    ]).to(device)
+    if proj.shape[0] == 1 and world2view.shape[0] > 1:
+        # Expand proj (when proj is [1, 4, 4] but batch size > 1) to match batch size
+        proj = proj.expand(world2view.shape[0], -1, -1)
     
-    R = Rz @ Ry @ Rx    # Combine rotations
-    
-    # Construct the 4x4 world-to-view matrix Rt
-    Rt = torch.eye(4).to(device)
-    Rt[:3, :3] = R           # rotation
-    Rt[:3, 3] = cam_pose[3:] # translation
-    return Rt
+    # Full transform (proj @ view)
+    full_proj = torch.bmm(proj, world2view)      # [B, 4, 4]
 
-def verts_clip_to_ndc(verts_clip : torch.tensor, image_size, out_dim=2):
-    # Author: Peizhi Yan
-    # transform the clipped vertices to NDC
-    # this function is differentiable
-    # inputs:
-    #    - verts_clip: torch.tensor of shape [1, N, 3] where N is the number of vertices
-    #    - image_size: int   it should match the rendered image size (assume height == width)
-    #    - out_dim:    int   the output dimension be either 2 for 2D or 3 for 3D
-    # returns:
-    #    - verts_ndc: torch.tensor of shape [N, out_dim]
-    verts_ndc = verts_clip[:, :, :3] / verts_clip[:, :, 3:]
-    verts_ndc = verts_ndc[0, :, :out_dim]
-    verts_ndc[:,1] *= -1 # flip y
-    verts_ndc = (verts_ndc / 2.0 + 0.5) * image_size # de-normalize
-    return verts_ndc
+    # Flip y after projection
+    full_proj[:, 1, :] *= -1
+
+    # Project verts
+    verts_h = torch.cat([verts, torch.ones(B, verts.shape[1], 1, device=device)], dim=-1)  # [B, V, 4]
+    verts_clip = torch.bmm(verts_h, full_proj.transpose(-1, -2)) # [B, V, 4]
+    return verts_clip
+
+def batch_verts_clip_to_ndc(verts_clip):
+    ndc = verts_clip[:, :, :3] / (verts_clip[:, :, 3:4] + 1e-8)
+    ndc[:, :, 1] *= -1  # flip y
+    return ndc  # [B, V, 3]
+
+def batch_verts_ndc_to_screen(ndc, image_size):
+    screen = (ndc / 2.0 + 0.5) * image_size
+    return screen
+
+
 
 

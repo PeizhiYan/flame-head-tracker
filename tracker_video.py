@@ -1,11 +1,7 @@
-###########################################
-## FLAME Video Tracker.                   #
-## -------------------------------------- #
-## Author: Peizhi Yan                     #
-## Update: 11/12/2024                     #
-###########################################
 #
-# Copyright (C) Peizhi Yan. 2024
+# FLAME Video Tracker
+# Author: Peizhi Yan
+# Copyright (C) Peizhi Yan. 2025
 #
 
 import os
@@ -19,20 +15,14 @@ import random
 from utils.video_utils import video_to_images
 from tracker_base import Tracker
 
-def sample_frames(frames, N):
-    # If N is greater than the number of frames, return the entire list
-    if N >= len(frames):
-        return frames
-    # Otherwise, return a random sample of N frames
-    return random.sample(frames, N)
 
 
 
-def track_video_legacy(tracker_cfg):
+def track_video(tracker_cfg):
 
     # load video frames to images
-    frames = video_to_images(video_path = tracker_cfg['video_path'], 
-                             original_fps = tracker_cfg['original_fps'], 
+    frames = video_to_images(video_path    = tracker_cfg['video_path'], 
+                             original_fps  = tracker_cfg['original_fps'], 
                              subsample_fps = tracker_cfg['subsample_fps'])
 
     video_path = tracker_cfg['video_path']
@@ -49,21 +39,22 @@ def track_video_legacy(tracker_cfg):
     ## Setup Flame Tracker    #     
     ###########################
     tracker = Tracker(tracker_cfg)
+    tracker.set_landmark_detector('mediapipe')
 
-    ###########################
-    ## Estimate Global Shape  #     
-    ###########################
-    print('Estimating global shape code')
-    MAX_SAMPLE_SIZE = 100
-    frames_subset = sample_frames(frames, MAX_SAMPLE_SIZE) # we take a subset of frames to estimate the global shape code
+    ##############################
+    ## Estimate Canonical Shape  #     
+    ##############################
+    print('>>> Estimating canonical shape code')
+    MAX_SAMPLE_SIZE = 10
+    frames_subset = frames[:MAX_SAMPLE_SIZE] # we take the first few frames to estimate the canonical shape code
     with torch.no_grad():
-        mean_shape_code = torch.zeros([1,100], dtype=torch.float32).to(tracker.device)
+        mean_shape_code = np.zeros([1,tracker.NUM_SHAPE_COEFFICIENTS], dtype=np.float32)
         counter = 0
         for i in tqdm(range(len(frames_subset))):
             img = frames_subset[i]
-            deca_dict = tracker.run_deca(img) # run DECA reconstruction
-            if deca_dict is not None:
-                mean_shape_code += deca_dict['shape']
+            in_dict = tracker.prepare_intermediate_data_from_image(img, realign=True) # run reconstruction models
+            if in_dict is not None:
+                mean_shape_code += in_dict['shape']
                 counter += 1
         if counter == 0:
             mean_shape_code = None
@@ -73,9 +64,12 @@ def track_video_legacy(tracker_cfg):
     #######################
     # process all frames  #
     #######################
-    print(f'Processing video: {video_path}')
+    print(f'>>> Processing video: {video_path}')
     prev_ret_dict = None
     for fid in tqdm(range(len(frames))):
+        if prev_ret_dict is None:
+            # it's said mediapipe might fail on the first frame.. 
+            _ = tracker.prepare_intermediate_data_from_image(img, realign=True)
 
         # # Skip processed files (optional)
         # if os.path.exists(os.path.join(result_save_path, f'{fid}_compare.jpg')):
@@ -97,7 +91,7 @@ def track_video_legacy(tracker_cfg):
         with torch.no_grad():
             with open(save_file_path, 'rb') as f:
                 loaded_params = pickle.load(f)
-            img = ret_dict['img']
+            img = ret_dict['img'][0]
 
             result_img = np.zeros([256, 2*256, 3], dtype=np.uint8)
 
@@ -108,80 +102,12 @@ def track_video_legacy(tracker_cfg):
             result_img[:,:256,:] = gt_img
 
             # rendered with texture but canonical camera pose
-            rendered = np.clip(cv2.resize(loaded_params['img_rendered'], (256,256)), 0, 255)
+            rendered = np.clip(cv2.resize(loaded_params['img_rendered'][0], (256,256)), 0, 255)
             rendered = cv2.cvtColor(rendered, cv2.COLOR_RGB2BGR)
             result_img[:,256:256*2,:] = rendered
 
             cv2.imwrite(os.path.join(result_save_path, f'{fid}_compare.jpg'), result_img)
 
-
-
-def track_video(tracker_cfg):
-
-    # load video frames to images
-    frames = video_to_images(video_path = tracker_cfg['video_path'], 
-                             original_fps = tracker_cfg['original_fps'], 
-                             subsample_fps = tracker_cfg['subsample_fps'])
-
-    video_path = tracker_cfg['video_path']
-    save_path = tracker_cfg['save_path']
-
-    video_base_name = os.path.basename(video_path)
-    video_name = video_base_name.split('.')[0] # remove the name extension
-
-    result_save_path = os.path.join(save_path, video_name)
-    if not os.path.exists(result_save_path):
-        os.makedirs(result_save_path) # create the output path if not exists
-
-    ###########################
-    ## Setup Flame Tracker    #     
-    ###########################
-    tracker = Tracker(tracker_cfg)
-
-    # frames = frames[:30] # for debugging only
-
-    #######################
-    # process all frames  #
-    #######################
-    print(f'Processing video: {video_path}')
-    ret_dict_all = tracker.run_all_images(imgs=frames, realign=True)
-
-    #################
-    # save results  #
-    #################
-    print(f'Saving results: {video_path}')
-    NUM_OF_RESULTS = len(ret_dict_all['shape'])
-    for fid in tqdm(range(NUM_OF_RESULTS)):
-
-        ret_dict = {}
-        for key in ret_dict_all.keys():
-            ret_dict[key] = ret_dict_all[key][fid]
-
-        # save
-        save_file_path = os.path.join(result_save_path, f'{fid}.npy')
-        with open(save_file_path, 'wb') as f:
-            pickle.dump(ret_dict, f)
-
-        # check result: reconstruct from saved parameters and save the visualization results
-        with torch.no_grad():
-            with open(save_file_path, 'rb') as f:
-                loaded_params = pickle.load(f)
-            img = ret_dict['img']
-
-            result_img = np.zeros([256, 2*256, 3], dtype=np.uint8)
-
-            # GT image            
-            gt_img = cv2.resize(np.asarray(img), (256,256))
-            gt_img = np.clip(np.array(gt_img, dtype=np.uint8), 0, 255) # uint8
-            gt_img = cv2.cvtColor(gt_img, cv2.COLOR_RGB2BGR)
-            result_img[:,:256,:] = gt_img
-
-            # rendered with texture but canonical camera pose
-            rendered = np.clip(cv2.resize(loaded_params['img_rendered'], (256,256)), 0, 255)
-            rendered = cv2.cvtColor(rendered, cv2.COLOR_RGB2BGR)
-            result_img[:,256:256*2,:] = rendered
-
-            cv2.imwrite(os.path.join(result_save_path, f'{fid}_compare.jpg'), result_img)
 
 
 

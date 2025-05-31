@@ -1,147 +1,166 @@
 #
-# Copyright (C) 2023, Inria
-# GRAPHDECO research group, https://team.inria.fr/graphdeco
-# All rights reserved.
-#
-# This software is free for non-commercial, research and evaluation use 
-# under the terms of the LICENSE.md file.
-#
-# For inquiries contact  george.drettakis@inria.fr
+# General utility functions.     
+# Author: Peizhi Yan                
+# Copyright. 2025
 #
 
-import torch
-import sys
-from datetime import datetime
 import numpy as np
-import random
+import cv2
+import torch
+from pytorch3d.renderer import (
+    OrthographicCameras, MeshRenderer, MeshRasterizer,
+    SoftPhongShader, RasterizationSettings, PointLights
+)
+from pytorch3d.structures import Meshes
+from pytorch3d.renderer import TexturesVertex
+from utils.graphics_utils import compute_vertex_normals
 
-def dict2obj(d):
-    if isinstance(d, list):
-        d = [dict2obj(x) for x in d]
-    if not isinstance(d, dict):
-        return d
-
-    class C(object):
-        pass
-
-    o = C()
-    for k in d:
-        o.__dict__[k] = dict2obj(d[k])
-    return o
-
-def inverse_sigmoid(x):
-    return torch.log(x/(1-x))
-
-def PILtoTorch(pil_image, resolution):
-    resized_image_PIL = pil_image.resize(resolution)
-    resized_image = torch.from_numpy(np.array(resized_image_PIL)) / 255.0
-    if len(resized_image.shape) == 3:
-        return resized_image.permute(2, 0, 1)
-    else:
-        return resized_image.unsqueeze(dim=-1).permute(2, 0, 1)
-
-def get_expon_lr_func(
-    lr_init, lr_final, lr_delay_steps=0, lr_delay_mult=1.0, max_steps=1000000
-):
-    """
-    Copied from Plenoxels
-
-    Continuous learning rate decay function. Adapted from JaxNeRF
-    The returned rate is lr_init when step=0 and lr_final when step=max_steps, and
-    is log-linearly interpolated elsewhere (equivalent to exponential decay).
-    If lr_delay_steps>0 then the learning rate will be scaled by some smooth
-    function of lr_delay_mult, such that the initial learning rate is
-    lr_init*lr_delay_mult at the beginning of optimization but will be eased back
-    to the normal learning rate when steps>lr_delay_steps.
-    :param conf: config subtree 'lr' or similar
-    :param max_steps: int, the number of steps during optimization.
-    :return HoF which takes step as input
-    """
-
-    def helper(step):
-        if step < 0 or (lr_init == 0.0 and lr_final == 0.0):
-            # Disable this parameter
-            return 0.0
-        if lr_delay_steps > 0:
-            # A kind of reverse cosine decay.
-            delay_rate = lr_delay_mult + (1 - lr_delay_mult) * np.sin(
-                0.5 * np.pi * np.clip(step / lr_delay_steps, 0, 1)
-            )
+def check_nan_in_dict(array_dict):
+    # Function to check for NaN in dictionary of NumPy arrays
+    nan_detected = {}
+    flag = False # True: there exist at least a NaN value
+    for key, array in array_dict.items():
+        if np.isnan(array).any():
+            nan_detected[key] = True
+            flag = True
         else:
-            delay_rate = 1.0
-        t = np.clip(step / max_steps, 0, 1)
-        log_lerp = np.exp(np.log(lr_init) * (1 - t) + np.log(lr_final) * t)
-        return delay_rate * log_lerp
+            nan_detected[key] = False
+    return nan_detected, flag
 
-    return helper
 
-def strip_lowerdiag(L):
-    uncertainty = torch.zeros((L.shape[0], 6), dtype=torch.float, device="cuda")
+def draw_landmarks(img, landmarks_2d_screen, eye_landmarks2d_screen, ear_landmarks2d_screen, blendweight=0.8):
+    """
+    Draw landmarks on the image.
+    Args:
+        img: The image on which to draw landmarks. [H, W, 3] uint8
+        landmarks_2d_screen: 2D landmarks in screen coordinates. [68, 2]
+        eye_landmarks2d_screen: Eye landmarks in screen coordinates. [10, 2]
+        ear_landmarks2d_screen: Ear landmarks in screen coordinates. [40, 2]
+        blendweight: how much to keep the original image
+    """
+    H = img.shape[0]
+    img = cv2.addWeighted(img, blendweight, np.full_like(img, 255), 1-blendweight, 0) # blend with white filter
+    for j, coords in enumerate(landmarks_2d_screen):
+        coords = np.clip(coords, 0, H-1).astype(np.uint8)
+        #coords = np.clip((coords / 2 + 1) * self.H, 0, self.H).astype(np.uint8)
+        if j < 17 // 2: color = (0, 100, 0)
+        elif j < 17: color = (0, 255, 0)
+        else: color = (150, 255, 0)
+        cv2.circle(img, (coords[0], coords[1]), radius=0, color=color, thickness=2)  # Green color, filled circle
 
-    uncertainty[:, 0] = L[:, 0, 0]
-    uncertainty[:, 1] = L[:, 0, 1]
-    uncertainty[:, 2] = L[:, 0, 2]
-    uncertainty[:, 3] = L[:, 1, 1]
-    uncertainty[:, 4] = L[:, 1, 2]
-    uncertainty[:, 5] = L[:, 2, 2]
-    return uncertainty
+    # draw eye landmarks as blue dots
+    for j, coords in enumerate(eye_landmarks2d_screen):
+        color = (20, 20, 255)
+        coords = np.clip(coords, 0, H-1).astype(np.uint8)
+        #coords = np.clip((coords / 2 + 1) * self.H, 0, self.H).astype(np.uint8)
+        cv2.circle(img, (coords[0], coords[1]), radius=0, color=color, thickness=2)  # Blue color, filled circle
 
-def strip_symmetric(sym):
-    return strip_lowerdiag(sym)
+    # draw ear landmarks as pink dots
+    for j, coords in enumerate(ear_landmarks2d_screen):
+        if j < 20: color = (100, 0, 100)
+        else: color = (255, 0, 255)
+        coords = np.clip(coords, 0, H-1).astype(np.uint8)
+        #coords = np.clip((coords / 2 + 1) * self.H, 0, self.H).astype(np.uint8)
+        cv2.circle(img, (coords[0], coords[1]), radius=0, color=color, thickness=2)
+    return img
 
-def build_rotation(r):
-    norm = torch.sqrt(r[:,0]*r[:,0] + r[:,1]*r[:,1] + r[:,2]*r[:,2] + r[:,3]*r[:,3])
 
-    q = r / norm[:, None]
+@torch.no_grad()
+def render_geometry(vertices, verts_ndc_3d, faces, device, render_size=256):
+    """ 
+    For visualizing the FLAME mesh using PyTorch3D.
+    Args:
+        vertices: [V, 3] vertices of the mesh              numpy
+        verts_ndc_3d: [V, 3] vertices in NDC coordinates   numpy
+        faces: [F, 3] triangle faces of the mesh           numpy
+    Returns:
+        rendered_img: [H, W, 3] rendered image in uint8 RGB format
+        foreground_mask: [H, W] binary mask of the rendered image
+    """
+    faces = torch.from_numpy(faces).to(device)   # [F, 3] faces of the template mesh
+    vertices = torch.from_numpy(vertices).to(device)  # [V, 3] vertices of the mesh
+    verts_ndc_3d = torch.from_numpy(verts_ndc_3d).to(device)  # [V, 3] vertices in NDC coordinates
+    mesh = Meshes(verts=verts_ndc_3d[None], faces=faces[None])
 
-    R = torch.zeros((q.size(0), 3, 3), device='cuda')
+    # Compute vertex normals
+    normals = compute_vertex_normals(verts=vertices, faces=faces)  # [V, 3]
 
-    r = q[:, 0]
-    x = q[:, 1]
-    y = q[:, 2]
-    z = q[:, 3]
+    # Set up lighting and fake camera
+    light_pos = torch.tensor([0.0, 0.0, 10.0], device=vertices.device)  # In front of the mesh
+    camera_pos = torch.tensor([0.0, 0.0, 10.0], device=vertices.device)
+    ambient_color  = torch.tensor([0.1, 0.1, 0.1], device=vertices.device)  # [3], RGB
+    diffuse_color  = torch.tensor([0.8, 0.8, 0.8], device=vertices.device)
+    specular_color = torch.tensor([0.0, 0.0, 0.0], device=vertices.device)
+    shininess = 30.0  # Specular exponent
+    base_color = torch.ones_like(vertices) 
 
-    R[:, 0, 0] = 1 - 2 * (y*y + z*z)
-    R[:, 0, 1] = 2 * (x*y - r*z)
-    R[:, 0, 2] = 2 * (x*z + r*y)
-    R[:, 1, 0] = 2 * (x*y + r*z)
-    R[:, 1, 1] = 1 - 2 * (x*x + z*z)
-    R[:, 1, 2] = 2 * (y*z - r*x)
-    R[:, 2, 0] = 2 * (x*z - r*y)
-    R[:, 2, 1] = 2 * (y*z + r*x)
-    R[:, 2, 2] = 1 - 2 * (x*x + y*y)
-    return R
+    v = vertices     # [V, 3]
+    n = normals      # [V, 3]
 
-def build_scaling_rotation(s, r):
-    L = torch.zeros((s.shape[0], 3, 3), dtype=torch.float, device="cuda")
-    R = build_rotation(r)
+    # Light direction (from vertex to light)
+    light_dir = (light_pos - v)  # [V, 3]
+    light_dir = light_dir / (light_dir.norm(dim=-1, keepdim=True) + 1e-8)
 
-    L[:,0,0] = s[:,0]
-    L[:,1,1] = s[:,1]
-    L[:,2,2] = s[:,2]
+    # View direction (from vertex to camera)
+    view_dir = (camera_pos - v)
+    view_dir = view_dir / (view_dir.norm(dim=-1, keepdim=True) + 1e-8)
 
-    L = R @ L
-    return L
+    # Reflection direction for specular
+    reflect_dir = 2 * (n * (n * light_dir).sum(-1, keepdim=True)) - light_dir
+    reflect_dir = reflect_dir / (reflect_dir.norm(dim=-1, keepdim=True) + 1e-8)
 
-def safe_state(silent):
-    old_f = sys.stdout
-    class F:
-        def __init__(self, silent):
-            self.silent = silent
+    # Ambient term: just base color * ambient
+    ambient = ambient_color * base_color  # [V, 3]
 
-        def write(self, x):
-            if not self.silent:
-                if x.endswith("\n"):
-                    old_f.write(x.replace("\n", " [{}]\n".format(str(datetime.now().strftime("%d/%m %H:%M:%S")))))
-                else:
-                    old_f.write(x)
+    # Diffuse term: base color * diffuse * max(0, dot(normal, light_dir))
+    diff = torch.clamp((n * light_dir).sum(-1, keepdim=True), min=0.0)
+    diffuse = diffuse_color * base_color * diff  # [V, 3]
 
-        def flush(self):
-            old_f.flush()
+    # Specular term: specular color * [max(0, dot(reflect_dir, view_dir))^shininess]
+    spec = torch.clamp((reflect_dir * view_dir).sum(-1, keepdim=True), min=0.0)
+    specular = specular_color * (spec ** shininess)  # [V, 3]
 
-    sys.stdout = F(silent)
+    # Final color per vertex
+    vertex_color = ambient + diffuse + specular
+    vertex_color = torch.clamp(vertex_color, 0.0, 1.0)  # Ensure in [0,1]
 
-    random.seed(0)
-    np.random.seed(0)
-    torch.manual_seed(0)
-    torch.cuda.set_device(torch.device("cuda:0"))
+    mesh.textures = TexturesVertex(verts_features=vertex_color[None])
+    
+    # No camera transform: this is a hack; set camera at the origin with identity rotation
+    R=torch.eye(3)
+    R[0,0] = -1.0
+    R[1,1] = -1.0
+    R = R[None].to(device)  # Add batch dimension and move to device
+    T=torch.tensor([0,0,0])[None]  # Place the camera at z=1.0
+    cameras = OrthographicCameras(device=device, R=R, T=T)
+
+    # Standard rasterization/rendering setup
+    raster_settings = RasterizationSettings(
+        image_size=512,  # e.g., 224
+        blur_radius=0.0,
+        faces_per_pixel=1
+    )
+    lights = PointLights(device=device, location=[[0.0, 0.0, 0.0]],
+                        ambient_color=[[1.0, 1.0, 1.0]],
+                        diffuse_color=[[0.0, 0.0, 0.0]],
+                        specular_color=[[0.0, 0.0, 0.0]])
+    renderer = MeshRenderer(
+        rasterizer=MeshRasterizer(cameras=cameras, raster_settings=raster_settings),
+        shader=SoftPhongShader(device=device, cameras=cameras, lights=lights)
+    )
+
+    # Render the mesh
+    image = renderer(mesh)
+    alpha = image[0, ..., 3].cpu().numpy() 
+    foreground_mask = (alpha > 0).astype(np.uint8)
+    image = image[0, ..., :3].cpu().numpy()  # Convert to numpy array and remove alpha channel
+
+    image = (image * 255).astype(np.uint8)  # Convert to uint8 RGB format
+    image = np.clip(image, 0, 255)
+
+    image = cv2.resize(image, (render_size, render_size))
+    foreground_mask = cv2.resize(foreground_mask, (render_size, render_size))
+
+    return image, foreground_mask
+
+
