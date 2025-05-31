@@ -149,6 +149,7 @@ The results will be saved to the ```save_path```. The reconstruction result of e
 
 <div align="center"> 
   <b>More Examples</b>
+  <br>
   <b><img src="./assets/output_MVI_1797.gif" alt="drawing" width="600"/></b>
   <br>
   <b><img src="./assets/output_MVI_1811.gif" alt="drawing" width="600"/></b>
