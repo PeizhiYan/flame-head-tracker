@@ -9,7 +9,6 @@
 <div align="center"> 
   <b><img src="./assets/demo.gif" alt="drawing" width="600"/></b>
   <br>
- 
 </div>
 
 **Current Version**: v3.3 (May 30, 2025)
@@ -136,9 +135,6 @@ tracker_cfg = {
     'subsample_fps': 30,      # subsample fps
     'video_path': './assets/IMG_2647.MOV',  # example video
     'save_path': './output',  # tracking result save path
-    'use_kalman_filter': False, # whether to use Kalman filter
-    'kalman_filter_measurement_noise_factor': 1e-5, # measurement noise level in Kalman filter 
-    'kalman_filter_process_noise_factor': 1e-5,     # process noise level in Kalman filter 
 }
 
 ## Note that, the first frame will take longer time to process
@@ -151,6 +147,15 @@ The results will be saved to the ```save_path```. The reconstruction result of e
 
 
 
+<div align="center"> 
+  More Examples
+  <b><img src="./assets/output_MVI_1797.gif" alt="drawing" width="600"/></b>
+  <br>
+  <b><img src="./assets/output_MVI_1811.gif" alt="drawing" width="600"/></b>
+  <br>
+  <b><img src="./assets/output_bala.gif" alt="drawing" width="600"/></b>
+  <br>
+</div>
 
 
 
