@@ -2,7 +2,10 @@
 Author: Soubhik Sanyal
 Copyright (c) 2019, Soubhik Sanyal
 All rights reserved.
+
+Edited by: Peizhi Yan
 """
+
 # Modified from smplx code for FLAME
 import torch
 import torch.nn as nn
@@ -51,6 +54,7 @@ class FLAME(nn.Module):
         self.register_buffer('faces_tensor', to_tensor(to_np(flame_model.f, dtype=np.int64), dtype=torch.long))
         # The vertices of the template model
         self.register_buffer('v_template', to_tensor(to_np(flame_model.v_template), dtype=self.dtype))
+
         # The shape components and expression
         shapedirs = to_tensor(to_np(flame_model.shapedirs), dtype=self.dtype)
         shapedirs = torch.cat([shapedirs[:,:,:config.shape_params], shapedirs[:,:,300:300+config.expression_params]], 2)
@@ -65,13 +69,13 @@ class FLAME(nn.Module):
         self.register_buffer('parents', parents)
         self.register_buffer('lbs_weights', to_tensor(to_np(flame_model.weights), dtype=self.dtype))
 
-        # Fixing Eyeball and neck rotation
+        # Fixing head, eyeball and neck rotation
+        default_head_pose = torch.zeros([1, 3], dtype=self.dtype, requires_grad=False)
+        self.register_parameter('head_pose', nn.Parameter(default_head_pose, requires_grad=False))
         default_eyball_pose = torch.zeros([1, 6], dtype=self.dtype, requires_grad=False)
-        self.register_parameter('eye_pose', nn.Parameter(default_eyball_pose,
-                                                         requires_grad=False))
+        self.register_parameter('eye_pose', nn.Parameter(default_eyball_pose, requires_grad=False))
         default_neck_pose = torch.zeros([1, 3], dtype=self.dtype, requires_grad=False)
-        self.register_parameter('neck_pose', nn.Parameter(default_neck_pose,
-                                                          requires_grad=False))
+        self.register_parameter('neck_pose', nn.Parameter(default_neck_pose, requires_grad=False))
 
         # Static and Dynamic Landmark embeddings for FLAME
         lmk_embeddings = np.load(config.flame_lmk_embedding_path, allow_pickle=True, encoding='latin1')
@@ -173,23 +177,38 @@ class FLAME(nn.Module):
                                        self.full_lmk_bary_coords.repeat(vertices.shape[0], 1, 1))
         return landmarks3d
 
-    def forward(self, shape_params=None, expression_params=None, pose_params=None, eye_pose_params=None):
+    def forward(self, 
+                shape_params=None, 
+                expression_params=None, 
+                head_pose_params=None, 
+                jaw_pose_params=None, 
+                neck_pose_params=None, 
+                eye_pose_params=None):
         """
             Input:
-                shape_params: N X number of shape parameters
+                shape_params:      N X number of shape parameters
                 expression_params: N X number of expression parameters
-                pose_params: N X number of pose parameters (6)
+                head_pose_params:  N X 3, head rotation parameters
+                jaw_pose_params:   N X 3, jaw rotation parameters
+                neck_pose_params:  N X 3, neck rotation parameters
+                eye_pose_params:   N X 6, eye rotation parameters
             return:d
                 vertices: N X V X 3
                 landmarks: N X number of landmarks X 3
         """
         batch_size = shape_params.shape[0]
-        if eye_pose_params is None:
-            eye_pose_params = self.eye_pose.expand(batch_size, -1)
-        betas = torch.cat([shape_params, expression_params], dim=1)
-        full_pose = torch.cat([pose_params[:, :3], self.neck_pose.expand(batch_size, -1), pose_params[:, 3:], eye_pose_params], dim=1)
-        template_vertices = self.v_template.unsqueeze(0).expand(batch_size, -1, -1) # [N,V,3]
+        betas = torch.cat([shape_params, expression_params], dim=1) # shape + expression coefficients
         
+        if head_pose_params is None:
+            head_pose_params = self.head_pose.expand(batch_size, -1) # [N, 3]
+        if eye_pose_params is None:
+            eye_pose_params = self.eye_pose.expand(batch_size, -1)   # [N, 3]
+        if neck_pose_params is None:
+            neck_pose_params = self.neck_pose.expand(batch_size, -1) # [N, 3]
+
+        full_pose = torch.cat([head_pose_params, neck_pose_params, jaw_pose_params, eye_pose_params], dim=1) # [N, 15]
+        template_vertices = self.v_template.unsqueeze(0).expand(batch_size, -1, -1) # [N,V,3]
+
         # import ipdb; ipdb.set_trace()
         vertices, _ = lbs(betas, full_pose, template_vertices,
                           self.shapedirs, self.posedirs,

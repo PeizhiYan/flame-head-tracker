@@ -13,9 +13,10 @@
   <br>
 </div>
 
-**Current Version**: v3.3 (May 30, 2025)
+**Current Version**: v3.4 (June 18, 2025)
 
 **Previous Versions**:
+- v3.3 (https://github.com/PeizhiYan/flame-head-tracker/tree/v3.3)
 - v3.2 Stable (https://github.com/PeizhiYan/flame-head-tracker/tree/v3.2)
 
 ## Supported Features:
@@ -23,7 +24,7 @@
 | Scenario                        | 🙂 Landmarks-based Fitting  | 🔆 Photometric Fitting  |
 |---------------------------------|-----------------------------|--------------------------|
 | 📷 Single-Image Reconstruction | ✅  | ✅  |
-| 🎥 Monocular Video Tracking    | ✅  | Not support yet |
+| 🎥 Monocular Video Tracking    | ✅  | ✅  |
 
 
 
@@ -57,15 +58,18 @@ tracker_cfg = {
     'face_parsing_model_path': './models/79999_iter.pth',
     'template_mesh_file_path': './models/head_template.obj',
     'result_img_size': 512,
-    'device': device,
+    'use_head_pose': False,
+    'estimate_neck_pose': False,   # neck pose is not useful in single-image fittin
 }
 
 tracker = Tracker(tracker_cfg)
 
-tracker.update_fov(fov=20)                 # optional setting
-#tracker.update_fov(fov=50)                # optional setting (better for selfie images)
-#tracker.set_landmark_detector('FAN')      # optional setting
-tracker.set_landmark_detector('mediapipe') # optional setting
+tracker.update_fov(fov=20)                   # optional setting
+# tracker.update_fov(fov=50)                 # optional setting (better for selfie images)
+
+tracker.set_landmark_detector('hybrid')      # optional setting, by default use hybrid
+# tracker.set_landmark_detector('FAN')       # optional setting
+# tracker.set_landmark_detector('mediapipe') # optional setting
 
 
 ret_dict = tracker.load_image_and_run(img_path, realign=True, photometric_fitting=False)
@@ -73,38 +77,25 @@ ret_dict = tracker.load_image_and_run(img_path, realign=True, photometric_fittin
 
 The result ```ret_dict``` contains the following data:
 
-- **vertices** `(1, 5023, 3)`  
-  The reconstructed FLAME mesh vertices (including expression).  
-- **shape** `(1, 300)`  
-  The FLAME shape code.  
-- **exp** `(1, 100)`  
-  The FLAME expression code.  
-- **pose** `(1, 6)`  
-  The FLAME head (first 3 values) and jaw (last 3 values) poses.  
-- **eye_pose** `(1, 6)`  
-  The FLAME eyeball poses.  
-- **tex** `(1, 50)`  
-  The FLAME parametric texture code.  
-- **light** `(1, 9, 3)`  
-  The estimated SH lighting coefficients.  
-- **cam** `(1, 6)`  
-  The estimated 6DoF camera pose (yaw, pitch, roll, x, y, z).  
-- **img_rendered** `(1, 256, 256, 3)`  
-  Rendered shape on top of the original image (for visualization purposes only).  
-- **mesh_rendered** `(1, 256, 256, 3)`  
-  Rendered mesh shape with landmarks (for visualization purposes only).  
-- **img** `(1, 512, 512, 3)`  
-  The image on which the FLAME model was fit.  
-- **img_aligned** `(1, 512, 512, 3)`  
-  The aligned image.  
-- **parsing** `(1, 512, 512)`  
-  The face semantic parsing result of `img`.  
-- **parsing_aligned** `(1, 512, 512)`  
-  The face semantic parsing result of `img_aligned`.  
-- **lmks_68** `(1, 68, 2)`  
-  The 68 Dlib format face landmarks.  
-- **blendshape_scores** `(1, 52)`  
-  The facial expression blendshape scores from Mediapipe. 
+- **shape** `(1, 300)`  The FLAME shape code.  
+- **exp** `(1, 100)`    The FLAME expression code.  
+- **head_pose** `(1, 3)`  The FLAME head pose.  
+- **jaw_pose** `(1, 3)`    The FLAME jaw pose.
+- **neck_pose** `(1, 3)`    The FLAME neck pose.
+- **eye_pose** `(1, 6)`    The FLAME eyeball poses.  
+- **tex** `(1, 50)`    The FLAME parametric texture code.  
+- **light** `(1, 9, 3)`    The estimated SH lighting coefficients.  
+- **cam** `(1, 6)`    The estimated 6DoF camera pose (yaw, pitch, roll, x, y, z).  
+- **img_rendered** `(1, 256, 256, 3)`    Rendered shape on top of the original image (for visualization purposes only).  
+- **mesh_rendered** `(1, 256, 256, 3)`    Rendered mesh shape with landmarks (for visualization purposes only).  
+- **img** `(1, 512, 512, 3)`    The image on which the FLAME model was fit.  
+- **img_aligned** `(1, 512, 512, 3)`    The aligned image.  
+- **parsing** `(1, 512, 512)`    The face semantic parsing result of `img`.  
+- **parsing_aligned** `(1, 512, 512)`    The face semantic parsing result of `img_aligned`.  
+- **lmks_68** `(1, 68, 2)`    The 68 Dlib format face landmarks.
+- **lmks_ears** `(1, 20, 2)`    The ear landmarks (only one ear).  
+- **lmks_eyes** `(1, 10, 2)`    The eyes landmarks.  
+- **blendshape_scores** `(1, 52)`    The facial expression blendshape scores from Mediapipe. 
 
 </details>
 
@@ -131,19 +122,24 @@ tracker_cfg = {
     'template_mesh_file_path': './models/head_template.obj',
     'result_img_size': 512,
     'device': device,
+    'use_head_pose': False,
+    'estimate_neck_pose': False,   # neck pose is not useful in single-image fitting
 
-    # tracker video settings
-    'original_fps': 60,       # input video fps
-    'subsample_fps': 30,      # subsample fps
-    'video_path': './assets/IMG_2647.MOV',  # example video
-    'save_path': './output',  # tracking result save path
+    # settings for video tracking
+    'original_fps': 60,                     # input video fps
+    'subsample_fps': 30,                    # subsample fps
+    'photometric_fitting': False,           # True: use photometric fitting (slow); False: use landmark-fitting (faster) 
+    'video_path': './assets/IMG_2647.MOV',  # example video file path
+    'save_path': './output',                # tracking result save path
 }
 
 ## Note that, the first frame will take longer time to process
 track_video(tracker_cfg)
 ```
 
-The results will be saved to the ```save_path```. The reconstruction result of each frame will be saved to the corresponding ```[frame_id].npy``` file. 
+The results will be saved to the ```save_path```. The reconstruction result of each frame will be saved to the corresponding ```[frame_id].npz``` file.
+
+If photometric fitting mode is True, it will also save the texture map as a ```texture.png``` file.
 
 </details>
 
@@ -152,11 +148,21 @@ The results will be saved to the ```save_path```. The reconstruction result of e
 <div align="left"> 
   <b>More Examples</b>
   <br>
-  <b><img src="./assets/output_MVI_1797.gif" alt="drawing" width="500"/></b>
+  <span>Landmark-based Fitting</span>
   <br>
-  <b><img src="./assets/output_MVI_1811.gif" alt="drawing" width="500"/></b>
+  <span><img src="./assets/output_MVI_1797-landmarks.gif" alt="drawing" width="500"/></span>
   <br>
-  <b><img src="./assets/output_bala.gif" alt="drawing" width="500"/></b>
+  <span><img src="./assets/output_MVI_1811-landmarks.gif" alt="drawing" width="500"/></span>
+  <br>
+  <span><img src="./assets/output_bala-landmarks.gif" alt="drawing" width="500"/></span>
+  <br>
+  <!-- <span>Photometric Fitting</span>
+  <br>
+  <span><img src="./assets/output_MVI_1797-landmarks.gif" alt="drawing" width="500"/></span>
+  <br>
+  <span><img src="./assets/output_MVI_1811-landmarks.gif" alt="drawing" width="500"/></span>
+  <br>
+  <span><img src="./assets/output_bala-landmarks.gif" alt="drawing" width="500"/></span> -->
   <br>
 </div>
 

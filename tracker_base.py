@@ -49,12 +49,10 @@ from utils.graphics_utils import fov_to_focal, build_intrinsics, batch_perspecti
                                  batch_verts_clip_to_ndc, batch_verts_ndc_to_screen
 
 
-
-
 class Tracker():
 
     def __init__(self, tracker_cfg):
-        self.VERSION = '3.3'
+        self.VERSION = '3.4'
         flame_cfg = {
             'mediapipe_face_landmarker_v2_path': tracker_cfg['mediapipe_face_landmarker_v2_path'],
             'flame_model_path': tracker_cfg['flame_model_path'],
@@ -85,7 +83,15 @@ class Tracker():
         self.IMG_SIZE = tracker_cfg['result_img_size']
         self.NUM_SHAPE_COEFFICIENTS = flame_cfg['shape_params']     # number of shape coefficients 
         self.NUM_EXPR_COEFFICIENTS = flame_cfg['expression_params'] # number of expression coefficients
-        self.NUM_TEX_COEFFICIENTS = flame_cfg['tex_params']         # number of texture coefficients 
+        self.NUM_TEX_COEFFICIENTS = flame_cfg['tex_params']         # number of texture coefficients
+        if 'use_head_pose' in tracker_cfg:
+            self.USE_HEAD_POSE = tracker_cfg['use_head_pose']
+        else:
+            self.USE_HEAD_POSE = False
+        if 'estimate_neck_pose' in tracker_cfg:
+            self.USE_NECK_POSE = tracker_cfg['estimate_neck_pose']
+        else:
+            self.USE_NECK_POSE = False
 
         if 'use_kalman_filter' in tracker_cfg:
             self.use_kalman_filter = tracker_cfg['use_kalman_filter']
@@ -94,7 +100,7 @@ class Tracker():
         else:
             self.use_kalman_filter = False
         
-        self.set_landmark_detector('mediapipe') # use Mediapipe as default face landmark detector
+        self.set_landmark_detector('hybrid') # use hybrid as default face landmark detector
 
         self.num_expr_coeffs = flame_cfg['expression_params'] # number of expression coefficients
 
@@ -115,13 +121,14 @@ class Tracker():
         self.mediapipe_detector = vision.FaceLandmarker.create_from_options(options)
 
         # FAN face alignment predictor (68 landmarks)
-        self.fa = face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_D, flip_input=False)
+        self.fa = face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_HALF_D, flip_input=True, face_detector='sfd')
 
         # Face parsing model
         self.face_parser = FaceParsing(model_path=tracker_cfg['face_parsing_model_path'])
 
         # FLAME model and FLAME texture model
         self.flame = FLAME(self.flame_cfg).to(self.device)
+        self.flame.v_template[3931:5023, 2] -= 0.005 # move the eyeballs backward a little bit
         self.flametex = FLAMETex(self.flame_cfg).to(self.device)
 
         # Eye Landmarks (mediapipe) and indices (FLAME mesh) 
@@ -171,12 +178,12 @@ class Tracker():
         print(f'\n>>> Flame Head Tracker v{self.VERSION} ready.')
 
 
-    def set_landmark_detector(self, landmark_detector='mediapipe'):
+    def set_landmark_detector(self, landmark_detector='hybrid'):
         """
         Set the face landmark detector
-        landmark_detector: choose one of 'mediapipe' or 'FAN'
+        landmark_detector: choose one of 'mediapipe' or 'FAN' or 'hybrid'
         """
-        assert landmark_detector in ['mediapipe', 'FAN'], "ERROR: landmark_detector need to be either mediapipe or FAN"
+        assert landmark_detector in ['mediapipe', 'FAN', 'hybrid'], "ERROR: landmark_detector need to be one of [mediapipe, FAN, hybrid]"
         self.landmark_detector = landmark_detector
     
 
@@ -186,7 +193,7 @@ class Tracker():
         correspondingly
         """
         # Assert that the FOV is within the reasonable range
-        assert 20 <= fov <= 60, f"FOV must be between 20 and 60. Provided: {fov}"
+        assert 10 <= fov <= 60, f"FOV must be between 10 and 60. Provided: {fov}"
         self.fov = fov # update the fov
         self.focal = fov_to_focal(fov = fov, sensor_size = self.H) # compute new focal length
         self.distance = self.DEFAULT_DISTANCE * (self.focal / self.DEFAULT_FOCAL) # compute new camera to object distance
@@ -238,7 +245,7 @@ class Tracker():
             return None
         else:
             # return face landmarks of the first detected face
-            return face_landmarks[0] # [68, 2]
+            return face_landmarks[0][:,:2] # [68, 2]
 
 
     def detect_face_landmarks(self, img):
@@ -269,6 +276,19 @@ class Tracker():
             if lmks_68 is None:
                 # no face detected by FAN
                 return None
+        elif self.landmark_detector == 'hybrid':
+            # use results from both Mediapipe and FAN to improve the alignment robustness
+            # run FAN face landmarks predictor
+            lmks_68_fa = self.fan_face_landmarks(img)
+            if lmks_68_fa is None:
+                # no face detected by FAN
+                return None
+            lmks_68_mp = convert_landmarks_mediapipe_to_dlib(lmks_mp=lmks_dense)
+            lmks_68 = np.copy(lmks_68_mp)
+            lmks_68[:4] = (lmks_68_fa[:4] + lmks_68_mp[:4]) / 2           # contour
+            lmks_68[13:17] = (lmks_68_fa[13:17] + lmks_68_mp[13:17]) / 2  # contour
+            lmks_68[30] = (lmks_68_fa[30] + lmks_68_mp[30]) / 2           # nose tip
+            lmks_68[31:35] = (lmks_68_fa[31:35] + lmks_68_mp[31:35]) / 2  # nose base
         else:
             return None
 
@@ -338,7 +358,8 @@ class Tracker():
             - recon_dict: a dictionary containing the initial FLAME coefficients
             - shape: shape coefficients [1, D_shape] from MICA
             - exp:   expression coefficients [1, D_exp] from DECA
-            - pose:  pose coefficients [1, 6] from DECA
+            - head_pose: head pose [1, 3] from DECA
+            - jaw_pose:  jaw pose [1, 3] from DECA
             - tex:  texture coefficients [1, D_tex] from DECA
             - light: light coefficients [1, 9, 3] from DECA
         """
@@ -354,8 +375,9 @@ class Tracker():
         exp_code = deca_dict['exp'].detach().cpu().numpy()[:,:min(50, self.NUM_EXPR_COEFFICIENTS)]
         recon_dict['exp'][:, :min(50, self.NUM_EXPR_COEFFICIENTS)] = exp_code
         # pose coefficients
-        pose = deca_dict['pose'].detach().cpu().numpy()[:,:self.NUM_TEX_COEFFICIENTS] # [1, 6]
-        recon_dict['pose'] = pose
+        pose = deca_dict['pose'].detach().cpu().numpy()[:,:self.NUM_TEX_COEFFICIENTS] # [1, 6] head + jaw pose
+        recon_dict['head_pose'] = pose[:,:3] # [1, 3] head pose
+        recon_dict['jaw_pose'] =  pose[:,3:] # [1, 3] jaw pose
         # texture coefficients
         recon_dict['tex'] = np.zeros([1, self.NUM_TEX_COEFFICIENTS], dtype=np.float32)
         tex_code = deca_dict['tex'].detach().cpu().numpy()[:,:min(50, self.NUM_TEX_COEFFICIENTS)]
@@ -428,7 +450,8 @@ class Tracker():
             'parsing_aligned':  parsing_mask_aligned[None],           # [1, 512, 512]
             'shape': recon_dict['shape'],                             # [1, D_shape]
             'exp':   recon_dict['exp'],                               # [1, D_exp]
-            'pose':  recon_dict['pose'],                              # [1, 6]
+            'head_pose':  recon_dict['head_pose'],                    # [1, 3]
+            'jaw_pose':  recon_dict['jaw_pose'],                      # [1, 3]
             'tex':   recon_dict['tex'],                               # [1, D_tex]
             'light': recon_dict['light'],                             # [1, 9, 3]
             'blendshape_scores': blend_scores[None],                  # [1, 52]
@@ -478,11 +501,14 @@ class Tracker():
         if photometric_fitting:
             # run photometric fitting
             parsing_mask = in_dict['parsing'][0] # [512,512]
-            face_mask = get_face_mask(parsing=parsing_mask, keep_ears=False) # [512,512]
+            face_mask = get_face_mask(parsing=parsing_mask, 
+                                      keep_mouth = False, 
+                                      keep_ears = True,
+                                      keep_neck = self.USE_NECK_POSE) # [512,512]
             ret_dict = self.run_fitting_photometric(face_mask, in_dict, prev_ret_dict, shape_code)
         else:
             # run facial landmark-based fitting
-            ret_dict = self.run_fitting(in_dict, prev_ret_dict, shape_code)
+            ret_dict = self.run_fitting(in_dict=in_dict, prev_ret_dict=prev_ret_dict, shape_code=shape_code)
 
         if ret_dict is None:
             return None
@@ -498,11 +524,15 @@ class Tracker():
         ret_dict['parsing'] = in_dict['parsing']
         ret_dict['parsing_aligned'] = in_dict['parsing_aligned']
         ret_dict['lmks_68'] = in_dict['gt_landmarks']
+        if self.use_ear_landmarks:
+            ret_dict['lmks_ears'] = in_dict['gt_ear_landmarks']
+        ret_dict['lmks_eyes'] = in_dict['gt_eye_landmarks']
         ret_dict['blendshape_scores'] = in_dict['blendshape_scores']
+        # ret_dict['fov'] = self.fov
         return ret_dict
     
 
-    def run_fitting(self, in_dict, prev_ret_dict = None, shape_code : np.array = None):
+    def run_fitting(self, in_dict, prev_ret_dict = None, shape_code : np.array = None, return_lmks_loss = False):
         """ Landmark-Based Fitting        
             - Stage 1: rigid fitting on the camera pose (6DoF) based on detected landmarks
             - Stage 2: fine-tune the parameters including shape, tex, exp, pose, eye_pose, and light
@@ -514,14 +544,14 @@ class Tracker():
         else:
             continue_fit = False
 
-        # convert the parameters to numpy arrays
-        params = {}
-        for key in ['shape', 'exp', 'pose', 'tex', 'light']:
-            if key == 'shape' and shape_code is not None:
-                # use pre-estimated global shape code
-                params[key] = shape_code
-            else:
-                params[key] = in_dict[key]
+        # # convert the parameters to numpy arrays
+        # params = {}
+        # for key in ['shape', 'exp', 'head_pose', 'jaw_pose', 'tex', 'light']:
+        #     if key == 'shape' and shape_code is not None:
+        #         # use pre-estimated global shape code
+        #         params[key] = shape_code
+        #     else:
+        #         params[key] = in_dict[key]
 
         # prepare ground truth landmarks
         gt_landmarks = torch.from_numpy(in_dict['gt_landmarks']).to(self.device).detach() # [N, 68, 2]
@@ -535,8 +565,10 @@ class Tracker():
         else:
             shape = torch.from_numpy(in_dict['shape']).to(self.device).detach()       # [N, D_shape]    
         exp = torch.from_numpy(in_dict['exp']).to(self.device).detach()               # [N, D_exp]
-        pose = torch.from_numpy(in_dict['pose']).to(self.device).detach()             # [N, 6]
-        pose[:,:3] *= 0  # clear FLAME's head pose (because we estimate the camera pose instead)
+        head_pose = torch.from_numpy(in_dict['head_pose']).to(self.device).detach()   # [N, 3]
+        jaw_pose = torch.from_numpy(in_dict['jaw_pose']).to(self.device).detach()     # [N, 3]
+        if not self.USE_HEAD_POSE:
+            head_pose *= 0  # clear FLAME's head pose (estimate the camera pose instead)
 
         ############################################################
         ## Stage 1: rigid fitting (estimate the 6DoF camera pose)  #
@@ -544,7 +576,8 @@ class Tracker():
 
         # FLAME reconstruction from coefficients (only do it once it rigid optimization)
         with torch.no_grad():
-            vertices, _, _ = self.flame(shape_params=shape, expression_params=exp, pose_params=pose) # [N, V, 3]
+            vertices, _, _ = self.flame(shape_params=shape, expression_params=exp, 
+                                        head_pose_params=head_pose, jaw_pose_params=jaw_pose) # [N, V, 3]
             face_68_vertices = self.flame.seletec_3d68(vertices)    # [N, 68, 3]
             left_ear_vertices = vertices[:, self.L_EAR_INDICES, :]  # [N, 20, 3]
             right_ear_vertices = vertices[:, self.R_EAR_INDICES, :] # [N, 20, 3]
@@ -563,7 +596,7 @@ class Tracker():
         d_camera_rotation = nn.Parameter(torch.zeros([batch_size, 3], dtype=torch.float32, device=self.device))
         d_camera_translation = nn.Parameter(torch.zeros([batch_size, 3], dtype=torch.float32, device=self.device))
         camera_params = [
-            {'params': [d_camera_translation], 'lr': 0.01}, 
+            {'params': [d_camera_translation], 'lr': 0.05}, 
             {'params': [d_camera_rotation], 'lr': 0.05}
         ]
 
@@ -611,7 +644,8 @@ class Tracker():
             landmarks2d = concat_verts_ndc_2d[:,:68,:] # [N, 68, 3] normalized to -1.0 ~ 1.0
             loss_facial = fitting_util.l2_distance(landmarks2d[:, 17:, :2], gt_landmarks[:, 17:, :2]) * l_f  # face 51 landmarks
             loss_contour = fitting_util.l2_distance(landmarks2d[:, :17, :2], gt_landmarks[:, :17, :2]) * l_c # contour loss
-            
+            # loss_eyes_contour = fitting_util.l2_distance(landmarks2d[:, 36:47, :2], gt_landmarks[:, 36:47, :2]) * 100  # eyes contour landmarks
+
             # ear landmarks loss
             EAR_LOSS_THRESHOLD = 0.2 # sometimes the detected ear landmarks are not accurate
             loss_ear = 0
@@ -622,7 +656,10 @@ class Tracker():
                 loss_r_ear = fitting_util.l2_distance(right_ear_landmarks2d, gt_ear_landmarks)
                 if loss_l_ear < EAR_LOSS_THRESHOLD: loss_ear = loss_ear + loss_l_ear
                 if loss_r_ear < EAR_LOSS_THRESHOLD: loss_ear = loss_ear + loss_r_ear
-            loss_ear = loss_ear * 100
+                yaw_angle = camera_pose[0, 0].item()
+                ear_loss_discount = max(0.1, min(0.3, abs(yaw_angle))) / 0.3
+                loss_ear = loss_ear * ear_loss_discount
+            loss_ear = loss_ear * 150
 
             loss = loss_facial + loss_contour + loss_ear
             e_opt_rigid.zero_grad()
@@ -642,17 +679,26 @@ class Tracker():
             T = kalman_filter_update_matrix(self.kf_T, T)
             optimized_camera_pose = torch.from_numpy(np.concatenate([R, T], axis=1)).to(self.device).detach()
 
+        if return_lmks_loss:
+            with torch.no_grad():
+                lmks_loss = fitting_util.l2_distance(landmarks2d[:, :, :2], gt_landmarks[:, :, :2])
+                lmks_loss = lmks_loss.item()
+
         ####################################
         ## Stage 2: coefficients fitting   #
         ####################################
 
         # prepare shape code offsets (to be optimized)
-        d_shape = torch.zeros(params['shape'].shape)
+        d_shape = torch.zeros(shape.shape)
         d_shape = nn.Parameter(d_shape.float().to(self.device))
 
         # prepare expression code offsets (to be optimized)
-        d_exp = torch.zeros(params['exp'].shape)
+        d_exp = torch.zeros(exp.shape)
         d_exp = nn.Parameter(d_exp.float().to(self.device))
+
+        # prepare head pose offsets (to be optimized)
+        d_head = torch.zeros([batch_size, 3])
+        d_head = nn.Parameter(d_head.float().to(self.device))
 
         # prepare jaw pose offsets (to be optimized)
         d_jaw = torch.zeros([batch_size, 3])
@@ -667,6 +713,8 @@ class Tracker():
             {'params': [d_jaw], 'lr': 0.025},
             {'params': [eye_pose], 'lr': 0.03}
         ]
+        if self.USE_HEAD_POSE:
+            fine_params.append({'params': [d_head], 'lr': 0.005})
         # if shape_code is None:
         #     fine_params.append({'params': [d_shape], 'lr': 0.01})
 
@@ -685,21 +733,22 @@ class Tracker():
                 e_opt_fine.param_groups[1]['lr'] = 0.01     
                 e_opt_fine.param_groups[2]['lr'] = 0.01     
 
+            optimized_shape = shape + d_shape
             optimized_exp = exp + d_exp
-            optimized_pose = torch.from_numpy(params['pose']).to(self.device).detach()
-            optimized_pose[0,:3] *= 0 # we clear FLAME's head pose 
-            optimized_pose[:,3:] = optimized_pose[:,3:] + d_jaw
-            vertices, _, _ = self.flame(shape_params=shape+d_shape, 
+            optimized_head_pose = head_pose + d_head
+            optimized_jaw_pose = jaw_pose + d_jaw
+            vertices, _, _ = self.flame(shape_params=optimized_shape, 
                                         expression_params=optimized_exp, 
-                                        pose_params=optimized_pose, 
-                                        eye_pose_params=eye_pose) # [1, N, 3]
+                                        head_pose_params=optimized_head_pose, 
+                                        jaw_pose_params=optimized_jaw_pose, 
+                                        eye_pose_params=eye_pose) # [1, V, 3]
 
             # project the vertices to 2D
             verts_clip = batch_perspective_projection(verts=vertices, camera_pose=optimized_camera_pose, 
                                                       K=self.K, image_size=self.H, near=self.znear, far=self.zfar) # [N, V, 3]
             verts_ndc_3d = batch_verts_clip_to_ndc(verts_clip) # output [N, V, 3] normalized to -1.0 ~ 1.0
-            # verts_ndc_2d = verts_ndc_3d[:,:,:2]
-
+            
+            # 68 face landmarks
             landmarks3d = self.flame.seletec_3d68(verts_ndc_3d) # [N, 68, 3]
             landmarks2d = landmarks3d[:,:,:2] #/ float(self.H) * 2 - 1  # [N, 68, 2] normalized to -1.0 ~ 1.0
 
@@ -708,6 +757,7 @@ class Tracker():
 
             # loss computation and optimization
             loss_facial = fitting_util.l2_distance(landmarks2d[:, 17:, :2], gt_landmarks[:, 17:, :2]) * 500
+            # loss_eyes_contour = fitting_util.l2_distance(landmarks2d[:, 36:47, :2], gt_landmarks[:, 36:47, :2]) * 100  # eyes contour landmarks
             loss_eyes = fitting_util.l2_distance(eyes_landmarks2d, gt_eye_landmarks) * 500
             loss_reg_exp = torch.sum(optimized_exp**2) * 0.025 # regularization on expression coefficients
             loss = loss_facial + loss_eyes + loss_reg_exp
@@ -721,13 +771,13 @@ class Tracker():
         with torch.no_grad():
             optimized_shape = shape + d_shape
             optimized_exp = exp + d_exp
-            optimized_pose = torch.from_numpy(params['pose']).to(self.device).detach()
-            optimized_pose[0,:3] *= 0 # we clear FLAME's head pose 
-            optimized_pose[:,3:] = optimized_pose[:,3:] + d_jaw # clear head pose and set jaw pose
+            optimized_head_pose = head_pose + d_head
+            optimized_jaw_pose = jaw_pose + d_jaw
             vertices, _, _ = self.flame(shape_params=optimized_shape, 
                                         expression_params=optimized_exp, 
-                                        pose_params=optimized_pose, 
-                                        eye_pose_params=eye_pose)
+                                        head_pose_params=optimized_head_pose, 
+                                        jaw_pose_params=optimized_jaw_pose, 
+                                        eye_pose_params=eye_pose) # [1, V, 3]
 
             verts_clip = batch_perspective_projection(verts=vertices, camera_pose=optimized_camera_pose, 
                                         K=self.K, image_size=self.H, near=self.znear, far=self.zfar) # [N, V, 3]
@@ -754,19 +804,22 @@ class Tracker():
         # Prepare results  #
         ####################
         ret_dict = {
-            'vertices': vertices.detach().cpu().numpy(),         # [1,5023,3]
-            'shape': optimized_shape.detach().cpu().numpy(),     # [1,300]
-            'exp': optimized_exp.detach().cpu().numpy(),         # [1,100]
-            'pose': optimized_pose.detach().cpu().numpy(),       # [1,6]
-            'eye_pose': eye_pose.detach().cpu().numpy(),         # [1,6]
-            'tex': params['tex'],                                # [1,50]
-            'light': params['light'],                            # [1,9,3]
-            'cam': optimized_camera_pose.detach().cpu().numpy(), # [1,6]
+            'shape': optimized_shape.detach().cpu().numpy(),         # [1,300]
+            'exp': optimized_exp.detach().cpu().numpy(),             # [1,100]
+            'head_pose': optimized_head_pose.detach().cpu().numpy(), # [1,3]
+            'jaw_pose': optimized_jaw_pose.detach().cpu().numpy(),   # [1,3]
+            'eye_pose': eye_pose.detach().cpu().numpy(),             # [1,6]
+            'tex': in_dict['tex'],                                   # [1,50]
+            'light': in_dict['light'],                               # [1,9,3]
+            'cam': optimized_camera_pose.detach().cpu().numpy(),     # [1,6]
             'img_rendered': rendered_mesh_shape_img[None],
             'mesh_rendered': rendered_mesh_shape[None],
         }
         
-        return ret_dict
+        if return_lmks_loss:
+            return ret_dict, lmks_loss
+        else:
+            return ret_dict
 
 
     def run_fitting_photometric(self, face_mask, in_dict, prev_ret_dict = None, shape_code : np.array = None):
@@ -783,14 +836,15 @@ class Tracker():
 
         # convert the parameters to numpy arrays
         params = {}
-        for key in ['shape', 'tex', 'exp', 'pose', 'light']:
+        for key in ['shape', 'exp', 'head_pose', 'jaw_pose', 'tex', 'light']:
             if key == 'shape' and shape_code is not None:
                 # use pre-estimated global shape code
                 params[key] = shape_code
-            # elif key in ['shape', 'exp']:
-            #     params[key] = in_dict[key] * 0.0 # clear DECA's code
             else:
-                params[key] = in_dict[key]
+                if continue_fit == True and key in ['tex', 'light']:
+                    params[key] = prev_ret_dict[key]
+                else:
+                    params[key] = in_dict[key]
 
         # prepare ground truth face mask
         face_mask_resized = cv2.resize(face_mask, (self.RENDER_SIZE, self.RENDER_SIZE))   # [256,256]
@@ -809,11 +863,13 @@ class Tracker():
 
         # prepare FLAME coefficients in pytorch tensors
         shape = torch.from_numpy(params['shape']).to(self.device).detach()
-        tex = torch.from_numpy(params['tex']).to(self.device).detach()
         exp = torch.from_numpy(params['exp']).to(self.device).detach()
+        tex = torch.from_numpy(params['tex']).to(self.device).detach()
         light = torch.from_numpy(params['light']).to(self.device).detach()
-        pose = torch.from_numpy(params['pose']).to(self.device).detach()
-        pose[0,:3] *= 0 # we clear FLAME's head pose (we use camera pose instead)
+        head_pose = torch.from_numpy(params['head_pose']).to(self.device).detach()
+        jaw_pose = torch.from_numpy(params['jaw_pose']).to(self.device).detach()
+        if not self.USE_HEAD_POSE:
+            head_pose *= 0 # clear FLAME's head pose (use camera pose instead)
 
         ############################################################
         ## Stage 1: rigid fitting (estimate the 6DoF camera pose)  #
@@ -821,7 +877,8 @@ class Tracker():
         
         # FLAME reconstruction from coefficients (only do it once it rigid optimization)
         with torch.no_grad():
-            vertices, _, _ = self.flame(shape_params=shape, expression_params=exp, pose_params=pose) # [N, V, 3]
+            vertices, _, _ = self.flame(shape_params=shape, expression_params=exp, 
+                                        head_pose_params=head_pose, jaw_pose_params=jaw_pose) # [N, V, 3]
             face_68_vertices = self.flame.seletec_3d68(vertices)    # [N, 68, 3]
             left_ear_vertices = vertices[:, self.L_EAR_INDICES, :]  # [N, 20, 3]
             right_ear_vertices = vertices[:, self.R_EAR_INDICES, :] # [N, 20, 3]
@@ -870,7 +927,8 @@ class Tracker():
             landmarks2d = concat_verts_ndc_2d[:,:68,:] # [N, 68, 3] normalized to -1.0 ~ 1.0
             loss_facial = fitting_util.l2_distance(landmarks2d[:, 17:, :2], gt_landmarks[:, 17:, :2])  # face 51 landmarks
             loss_contour = fitting_util.l2_distance(landmarks2d[:, :17, :2], gt_landmarks[:, :17, :2]) # contour loss
-            
+            # loss_eyes_contour = fitting_util.l2_distance(landmarks2d[:, 36:47, :2], gt_landmarks[:, 36:47, :2])  # eyes contour landmarks
+
             # ear landmarks loss
             EAR_LOSS_THRESHOLD = 0.2 # sometimes the detected ear landmarks are not accurate
             loss_ear = 0
@@ -881,6 +939,9 @@ class Tracker():
                 loss_r_ear = fitting_util.l2_distance(right_ear_landmarks2d, gt_ear_landmarks)
                 if loss_l_ear < EAR_LOSS_THRESHOLD: loss_ear = loss_ear + loss_l_ear
                 if loss_r_ear < EAR_LOSS_THRESHOLD: loss_ear = loss_ear + loss_r_ear
+                yaw_angle = camera_pose[0, 0].item()
+                ear_loss_discount = max(0.1, min(0.3, abs(yaw_angle))) / 0.3
+                loss_ear = loss_ear * ear_loss_discount
             loss_ear = loss_ear * 0.5
 
             # loss computation and optimization
@@ -901,9 +962,17 @@ class Tracker():
         d_exp = torch.zeros(params['exp'].shape)
         d_exp = nn.Parameter(d_exp.float().to(self.device))
 
+        # prepare head pose offsets (to be optimized)
+        d_head = torch.zeros([batch_size, 3])
+        d_head = nn.Parameter(d_head.float().to(self.device))
+
         # prepare jaw pose offsets (to be optimized)
         d_jaw = torch.zeros([batch_size, 3])
-        d_jaw = nn.Parameter(d_jaw.float().to(self.device))    
+        d_jaw = nn.Parameter(d_jaw.float().to(self.device))
+
+        # prepare neck pose offsets (to be optimized)
+        d_neck = torch.zeros([batch_size, 3])
+        d_neck = nn.Parameter(d_neck.float().to(self.device))
         
         # prepare eyes poses offsets (to be optimized)
         eye_pose = torch.zeros(1,6) # FLAME's default_eyeball_pose are zeros
@@ -917,17 +986,38 @@ class Tracker():
         d_light = torch.zeros(params['light'].shape)
         d_light = nn.Parameter(d_light.float().to(self.device))
 
-        finetune_params = [
-            {'params': [d_tex], 'lr': 0.005}, 
-            {'params': [d_light], 'lr': 0.005}, 
-            {'params': [d_exp], 'lr': 0.005}, 
-            {'params': [d_jaw], 'lr': 0.005},
-            {'params': [eye_pose], 'lr': 0.005},
-            {'params': [d_camera_translation], 'lr': 0.005}, 
-            {'params': [d_camera_rotation], 'lr': 0.005},
-        ]
-        if shape_code is None:
-            finetune_params.append({'params': [d_shape], 'lr': 0.001})
+        # prepare texture map residual (to be optimized)
+        if continue_fit:
+            d_texture = torch.from_numpy(prev_ret_dict['d_texture']).to(self.device).detach()
+        else:
+            d_texture = torch.zeros([batch_size, 3, 256, 256])
+            d_texture = nn.Parameter(d_texture.float().to(self.device))
+
+        if continue_fit == False:
+            finetune_params = [
+                {'params': [d_tex], 'lr': 0.005}, 
+                {'params': [d_light], 'lr': 0.005},
+                {'params': [d_texture], 'lr': 0.05},
+                {'params': [d_exp], 'lr': 0.005}, 
+                {'params': [d_jaw], 'lr': 0.005},
+                {'params': [eye_pose], 'lr': 0.005},
+                {'params': [d_camera_translation], 'lr': 0.005}, 
+                {'params': [d_camera_rotation], 'lr': 0.005},
+            ]
+        else:
+            finetune_params = [
+                {'params': [d_exp], 'lr': 0.005}, 
+                {'params': [d_jaw], 'lr': 0.005},
+                {'params': [eye_pose], 'lr': 0.005},
+                {'params': [d_camera_translation], 'lr': 0.05}, 
+                {'params': [d_camera_rotation], 'lr': 0.05},
+            ]
+        if shape_code is None and not continue_fit:
+            finetune_params.append({'params': [d_shape], 'lr': 0.005})
+        if self.USE_HEAD_POSE:
+            finetune_params.append({'params': [d_head], 'lr': 0.001})
+        if self.USE_NECK_POSE:
+            finetune_params.append({'params': [d_neck], 'lr': 0.01})
 
         # fine optimizer
         e_opt_fine = torch.optim.Adam(
@@ -935,33 +1025,39 @@ class Tracker():
             weight_decay=0.0001
         )
 
+        # flame texture model
+        with torch.no_grad():
+            texture = torch.clamp(self.flametex(tex + d_tex) + d_texture, 0.0, 1.0)  # [N, 3, 256, 256]
+
         # optimization loop
         if continue_fit:
             # continue to fit on the next video frame
-            total_iterations = 300
+            total_iterations = 200
         else:
             # initial fitting, take longer time
-            total_iterations = 800      
+            total_iterations = 800
         for iter in range(total_iterations):
             e_opt_fine.zero_grad()
 
-            # flame shape model
-            optimized_pose = torch.from_numpy(params['pose']).to(self.device).detach()
-            optimized_pose[0,:3] *= 0 # we clear FLAME's head pose 
-            optimized_pose[:,3:] = optimized_pose[:,3:] + d_jaw
-            vertices, _, _ = self.flame(shape_params=shape+d_shape, 
-                                        expression_params=exp+d_exp, 
-                                        pose_params=optimized_pose, 
-                                        eye_pose_params=eye_pose) # [1, N, 3]
+            optimized_shape = shape + d_shape
+            optimized_exp = exp + d_exp
+            optimized_head_pose = head_pose + d_head
+            optimized_jaw_pose = jaw_pose + d_jaw
+            optimized_neck_pose = d_neck
+            vertices, _, _ = self.flame(shape_params=optimized_shape, 
+                                        expression_params=optimized_exp, 
+                                        head_pose_params=optimized_head_pose,
+                                        jaw_pose_params=optimized_jaw_pose,
+                                        neck_pose_params=optimized_neck_pose,
+                                        eye_pose_params=eye_pose) # [1, V, 3]
             
-            # flame texture model
-            texture = self.flametex(tex + d_tex) # [N, 3, 256, 256]
+            if continue_fit == False:
+                texture = torch.clamp(self.flametex(tex + d_tex) + d_texture, 0.0, 1.0)  # [N, 3, 256, 256]
 
             # project the vertices to 2D
             verts_clip = batch_perspective_projection(verts=vertices, camera_pose=optimized_camera_pose, 
                                                       K=self.K, image_size=self.H, near=self.znear, far=self.zfar) # [N, V, 3]
             verts_ndc_3d = batch_verts_clip_to_ndc(verts_clip) # output [N, V, 3] normalized to -1.0 ~ 1.0
-            # verts_ndc_2d = verts_ndc_3d[:,:,:2]
 
             # face landmarks
             landmarks3d = self.flame.seletec_3d68(verts_ndc_3d) # [N, 68, 3]
@@ -976,13 +1072,19 @@ class Tracker():
                 right_ear_landmarks2d = verts_ndc_3d[:,self.R_EAR_INDICES,:2]  # [1, 20, 2]
 
             # render textured mesh (using PyTorch3D's renderer)
-            rendered_textured = self.flame_texture_render(vertices, verts_ndc_3d, texture, light+d_light)
-            rendered_textured = rendered_textured['images'][:,:3,:,:] # [1,3,H,W] RGBA to RGB 
+            rendered_output = self.flame_texture_render(vertices, verts_ndc_3d, texture, light+d_light)
+            rendered_textured = rendered_output['images'][:,:3,:,:]             # [1,3,H,W] RGBA to RGB
+            if self.USE_NECK_POSE:
+                rendered_fg_mask = rendered_output['alpha_images'].detach()         # [1,1,256,256]
+                rendered_fg_mask = (rendered_fg_mask > 0).to(torch.uint8)[:,0,:,:]  # [1,256,256]
+                photo_loss_mask = rendered_fg_mask
+            else:
+                photo_loss_mask = gt_face_mask
 
             # face 68 landmarks loss
             loss_facial = fitting_util.l2_distance(landmarks2d[:, 17:, :2], gt_landmarks[:, 17:, :2])  # face 51 landmarks
             loss_contour = fitting_util.l2_distance(landmarks2d[:, :17, :2], gt_landmarks[:, :17, :2]) # contour loss
-            
+
             # ear landmarks loss
             EAR_LOSS_THRESHOLD = 0.2 # sometimes the detected ear landmarks are not accurate
             loss_ear = 0
@@ -991,11 +1093,14 @@ class Tracker():
                 loss_r_ear = fitting_util.l2_distance(right_ear_landmarks2d, gt_ear_landmarks)
                 if loss_l_ear < EAR_LOSS_THRESHOLD: loss_ear = loss_ear + loss_l_ear
                 if loss_r_ear < EAR_LOSS_THRESHOLD: loss_ear = loss_ear + loss_r_ear
-            loss_ear = loss_ear * 0.05
+                yaw_angle = camera_pose[0, 0].item()
+                ear_loss_discount = max(0.1, min(0.3, abs(yaw_angle))) / 0.3
+                loss_ear = loss_ear * ear_loss_discount
+            loss_ear = loss_ear * 0.1
 
             # loss computation and optimization
-            loss_photo = compute_batch_pixelwise_l1_loss(gt_img, rendered_textured, gt_face_mask) * 8  # photometric loss
-            loss_eyes = fitting_util.l2_distance(eyes_landmarks2d, gt_eye_landmarks) * 1
+            loss_photo = compute_batch_pixelwise_l1_loss(gt_img, rendered_textured, photo_loss_mask) * 8  # photometric loss
+            loss_eyes = fitting_util.l2_distance(eyes_landmarks2d, gt_eye_landmarks) * 5
             loss_reg_shape = (torch.sum(d_shape ** 2) / 2) * 1e-2 # 1e-4
             loss_reg_exp = (torch.sum((exp + d_exp) ** 2) / 2) * 1e-4 # 1e-3
             loss_reg = loss_reg_shape + loss_reg_exp # + loss_reg_tex
@@ -1007,16 +1112,20 @@ class Tracker():
         ## final results    #
         #####################
         with torch.no_grad():
-            optimized_pose = torch.from_numpy(params['pose']).to(self.device).detach()
-            optimized_pose[0,:3] *= 0 # we clear FLAME's head pose 
-            optimized_pose[:,3:] = optimized_pose[:,3:] + d_jaw # clear head pose and set jaw pose
-            vertices, _, _ = self.flame(shape_params=shape+d_shape, 
-                                        expression_params=exp+d_exp, 
-                                        pose_params=optimized_pose, 
-                                        eye_pose_params=eye_pose)
+            optimized_shape = shape + d_shape
+            optimized_exp = exp + d_exp
+            optimized_head_pose = head_pose + d_head
+            optimized_jaw_pose = jaw_pose + d_jaw
+            optimized_neck_pose = d_neck
+            vertices, _, _ = self.flame(shape_params=optimized_shape, 
+                                        expression_params=optimized_exp, 
+                                        head_pose_params=optimized_head_pose,
+                                        jaw_pose_params=optimized_jaw_pose,
+                                        neck_pose_params=optimized_neck_pose,
+                                        eye_pose_params=eye_pose) # [1, V, 3]
             
             # flame texture model
-            texture = self.flametex(tex + d_tex) # [N, 3, 256, 256]
+            texture = torch.clamp(self.flametex(tex + d_tex) + d_texture, 0.0, 1.0) # [N, 3, 256, 256]
             
             # project the vertices to 2D
             verts_clip = batch_perspective_projection(verts=vertices, camera_pose=optimized_camera_pose, 
@@ -1050,16 +1159,19 @@ class Tracker():
         # Prepare results  #
         ####################
         ret_dict = {
-            'vertices': vertices.detach().cpu().numpy(),              # [1,5023,3]
             'shape': (shape + d_shape).detach().cpu().numpy(),        # [1,300]
             'exp': (exp + d_exp).detach().cpu().numpy(),              # [1,100]
-            'pose': optimized_pose.detach().cpu().numpy(),            # [1,6]
+            'head_pose': optimized_head_pose.detach().cpu().numpy(),  # [1,3]
+            'jaw_pose': optimized_jaw_pose.detach().cpu().numpy(),    # [1,3]
+            'neck_pose': optimized_neck_pose.detach().cpu().numpy(),  # [1,3]
             'eye_pose': eye_pose.detach().cpu().numpy(),              # [1,6]
             'tex': (tex + d_tex).detach().cpu().numpy(),              # [1,50]
+            'd_texture': d_texture.detach().cpu().numpy(),            # [1,3,256,256]
+            'texture': texture.detach().cpu().numpy(),                # [1,3,256,256]
             'light': (light + d_light).detach().cpu().numpy(),        # [1,9,3]
             'cam': optimized_camera_pose.detach().cpu().numpy(),      # [1,6]
-            'img_rendered': rendered_mesh_shape_img[None],
-            'mesh_rendered': rendered_textured[None],
+            'img_rendered': rendered_mesh_shape_img[None],            # [1,256,256,3]
+            'mesh_rendered': rendered_textured[None],                 # [1,256,256,3]
         }
         
         return ret_dict

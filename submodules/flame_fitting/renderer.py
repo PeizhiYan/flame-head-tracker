@@ -194,6 +194,7 @@ class Renderer(nn.Module):
 
         outputs = {
             'images': images * alpha_images,
+            # 'images': images,
             'albedo_images': albedo_images,
             'alpha_images': alpha_images,
             'pos_mask': pos_mask,

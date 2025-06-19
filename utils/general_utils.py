@@ -28,6 +28,31 @@ def check_nan_in_dict(array_dict):
     return nan_detected, flag
 
 
+def plot_landmarks(img, lmks, color=(0, 255, 0), radius=2, thickness=-1, copy=True):
+    """
+    Draw 2D landmarks on an image.
+
+    Args:
+        img: np.ndarray, shape (H, W, 3) or (H, W), dtype uint8 or float32
+        lmks: np.ndarray, shape (68, 2), float32 or float64
+        color: tuple, color of the points (B, G, R)
+        radius: int, dot radius
+        thickness: int, -1 for filled
+        copy: bool, whether to copy image before drawing
+    Returns:
+        img_draw: image with landmarks
+    """
+    if copy:
+        img_draw = img.copy()
+    else:
+        img_draw = img
+
+    for (x, y) in lmks:
+        cv2.circle(img_draw, (int(round(x)), int(round(y))), radius, color, thickness, lineType=cv2.LINE_AA)
+
+    return img_draw
+
+
 def draw_landmarks(img, landmarks_2d_screen, eye_landmarks2d_screen, ear_landmarks2d_screen, blendweight=0.8):
     """
     Draw landmarks on the image.

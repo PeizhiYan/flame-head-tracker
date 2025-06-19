@@ -37,7 +37,10 @@ def get_foreground_mask(parsing : np.array):
     return foreground_mask.astype(np.float32)
 
 
-def get_face_mask(parsing : np.array, keep_ears : bool = False):
+def get_face_mask(parsing : np.array, 
+                  keep_mouth : bool = True,
+                  keep_ears : bool = False,
+                  keep_neck : bool = False):
     """
     Given parsing mask get the face region mask.
     {
@@ -60,11 +63,17 @@ def get_face_mask(parsing : np.array, keep_ears : bool = False):
     
     # Create a mask where parsing == 0 (background), then invert it to target the foreground
     face_mask = parsing_expanded != 0 # remove background first
-    non_face_mask = parsing_expanded >= 14 # non-facial region
+    non_face_mask = parsing_expanded > 14 # non-facial region
     face_mask = (face_mask ^ non_face_mask)
+    if keep_mouth == False:
+        mouth_mask = parsing_expanded == 11 # mouth region
+        face_mask = face_mask ^ mouth_mask
     if keep_ears == False:
         ear_mask = (parsing_expanded >= 7) & (parsing_expanded <=9) # ears
         face_mask = face_mask ^ ear_mask
+    if keep_neck == False:
+        neck_mask = parsing_expanded == 14  # neck region
+        face_mask = face_mask ^ neck_mask
     
     return face_mask.astype(np.float32)
 
