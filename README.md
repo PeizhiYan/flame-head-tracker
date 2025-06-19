@@ -43,40 +43,9 @@
 
 ## 🦖 Usage
 
+### Single-Image-Based Reconstruction 📷
 
-<details>
-  <summary><span style="font-size:1.3em">Single-Image-Based Reconstruction 📷</span></summary>
-
-Please follow the example in: ```./Example 1 - single-image reconstruction.ipynb```
-
-```python
-from tracker_base import Tracker
-
-tracker_cfg = {
-    'mediapipe_face_landmarker_v2_path': './models/face_landmarker.task',
-    'flame_model_path': './models/FLAME2020/generic_model.pkl',
-    'flame_lmk_embedding_path': './models/landmark_embedding.npy',
-    'ear_landmarker_path': './models/ear_landmarker.pth', # this is optional, if you do not want to use ear landmarks during fitting, just remove this line
-    'tex_space_path': './models/FLAME_albedo_from_BFM.npz',
-    'face_parsing_model_path': './models/79999_iter.pth',
-    'template_mesh_file_path': './models/head_template.obj',
-    'result_img_size': 512,
-    'use_head_pose': False,
-    'estimate_neck_pose': False,   # neck pose is not useful in single-image fittin
-}
-
-tracker = Tracker(tracker_cfg)
-
-tracker.update_fov(fov=20)                   # optional setting
-# tracker.update_fov(fov=50)                 # optional setting (better for selfie images)
-
-tracker.set_landmark_detector('hybrid')      # optional setting, by default use hybrid
-# tracker.set_landmark_detector('FAN')       # optional setting
-# tracker.set_landmark_detector('mediapipe') # optional setting
-
-
-ret_dict = tracker.load_image_and_run(img_path, realign=True, photometric_fitting=False)
-```
+Please follow the example in: [Example_1_single_image_reconstruction.ipynb](./Example_1_single_image_reconstruction.ipynb)
 
 The result ```ret_dict``` contains the following data:
 
@@ -100,52 +69,21 @@ The result ```ret_dict``` contains the following data:
 - **lmks_eyes** `(1, 10, 2)`    The eyes landmarks.  
 - **blendshape_scores** `(1, 52)`    The facial expression blendshape scores from Mediapipe. 
 
-</details>
 
 
 ---
 
 
-<details>
-  <summary><span style="font-size:1.3em">Monocular Video-Based Tracking 🎥</span></summary>
+### Monocular Video-Based Tracking 🎥
 
-Please follow the example in: ```./Example 2 - video tracking.ipynb```
+Please follow the example in: [Example_2_video_tracking.ipynb](./Example_2_video_tracking.ipynb)
 
-```python
-from tracker_video import track_video
-
-tracker_cfg = {
-    # tracker base settings
-    'mediapipe_face_landmarker_v2_path': './models/face_landmarker.task',
-    'flame_model_path': './models/FLAME2020/generic_model.pkl',
-    'flame_lmk_embedding_path': './models/landmark_embedding.npy',
-    'ear_landmarker_path': './models/ear_landmarker.pth', # this is optional, if you do not want to use ear landmarks during fitting, just remove this line
-    'tex_space_path': './models/FLAME_albedo_from_BFM.npz',
-    'face_parsing_model_path': './models/79999_iter.pth',
-    'template_mesh_file_path': './models/head_template.obj',
-    'result_img_size': 512,
-    'device': device,
-    'use_head_pose': False,
-    'estimate_neck_pose': False,   # neck pose is not useful in single-image fitting
-
-    # settings for video tracking
-    'original_fps': 60,                     # input video fps
-    'subsample_fps': 30,                    # subsample fps
-    'photometric_fitting': False,           # True: use photometric fitting (slow); False: use landmark-fitting (faster) 
-    'video_path': './assets/IMG_2647.MOV',  # example video file path
-    'save_path': './output',                # tracking result save path
-}
-
-## Note that, the first frame will take longer time to process
-track_video(tracker_cfg)
-```
 
 > [!NOTE]
 > The results will be saved to the ```save_path```. The reconstruction result of each frame will be saved to the corresponding ```[frame_id].npz``` file.
 >
 > If photometric fitting mode is True, it will also save the texture map as a ```texture.png``` file.
 
-</details>
 
 
 
