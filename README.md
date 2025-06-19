@@ -71,8 +71,6 @@ The result ```ret_dict``` contains the following data:
 
 
 
----
-
 
 ### Monocular Video-Based Tracking 🎥
 
@@ -113,7 +111,7 @@ Please follow the example in: [Example_2_video_tracking.ipynb](./Example_2_video
 
 
 
-
+---
 
 
 ## 🖥️ Environment Setup
