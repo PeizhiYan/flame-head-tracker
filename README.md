@@ -137,9 +137,10 @@ tracker_cfg = {
 track_video(tracker_cfg)
 ```
 
-The results will be saved to the ```save_path```. The reconstruction result of each frame will be saved to the corresponding ```[frame_id].npz``` file.
-
-If photometric fitting mode is True, it will also save the texture map as a ```texture.png``` file.
+> [!NOTE]
+> The results will be saved to the ```save_path```. The reconstruction result of each frame will be saved to the corresponding ```[frame_id].npz``` file.
+>
+> If photometric fitting mode is True, it will also save the texture map as a ```texture.png``` file.
 
 </details>
 
@@ -261,7 +262,9 @@ Because of copyright concerns, we cannot re-share some model files. Please follo
 
 #### Ear Landmarker (Optional)
 
-If you want to use ear landmarks during the fitting, please download our pre-trained ear landmarker model ```ear_landmarker.pth``` from https://github.com/PeizhiYan/flame-head-tracker/releases/download/resource/ear_landmarker.pth, and save at ```./models/```. But note that, this mode was trained on the i-Bug ear landmarks dataset, which is for RESEARCH purpose ONLY.
+If you want to use ear landmarks during the fitting, please download our pre-trained ear landmarker model ```ear_landmarker.pth``` from https://github.com/PeizhiYan/flame-head-tracker/releases/download/resource/ear_landmarker.pth, and save at ```./models/```. 
+> [!WARNING]
+> The ear landmarker model was trained on the i-Bug ear landmarks dataset, which is for RESEARCH purpose ONLY.
 
 
 The final structure of ```./models/``` is:
