@@ -128,7 +128,7 @@ class Tracker():
 
         # FLAME model and FLAME texture model
         self.flame = FLAME(self.flame_cfg).to(self.device)
-        self.flame.v_template[3931:5023, 2] -= 0.005 # move the eyeballs backward a little bit
+        # self.flame.v_template[3931:5023, 2] -= 0.005 # move the eyeballs backward a little bit
         self.flametex = FLAMETex(self.flame_cfg).to(self.device)
 
         # Eye Landmarks (mediapipe) and indices (FLAME mesh) 
@@ -643,7 +643,7 @@ class Tracker():
             # face 68 landmarks loss
             landmarks2d = concat_verts_ndc_2d[:,:68,:] # [N, 68, 3] normalized to -1.0 ~ 1.0
             loss_facial = fitting_util.l2_distance(landmarks2d[:, 17:, :2], gt_landmarks[:, 17:, :2]) * l_f  # face 51 landmarks
-            loss_contour = fitting_util.l2_distance(landmarks2d[:, :17, :2], gt_landmarks[:, :17, :2]) * l_c # contour loss
+            loss_jawline = fitting_util.l2_distance(landmarks2d[:, :17, :2], gt_landmarks[:, :17, :2]) * l_c # lawline loss
             # loss_eyes_contour = fitting_util.l2_distance(landmarks2d[:, 36:47, :2], gt_landmarks[:, 36:47, :2]) * 100  # eyes contour landmarks
 
             # ear landmarks loss
@@ -661,7 +661,7 @@ class Tracker():
                 loss_ear = loss_ear * ear_loss_discount
             loss_ear = loss_ear * 150
 
-            loss = loss_facial + loss_contour + loss_ear
+            loss = loss_facial + loss_jawline + loss_ear
             e_opt_rigid.zero_grad()
             loss.backward()
             e_opt_rigid.step()
@@ -926,8 +926,8 @@ class Tracker():
             # face 68 landmarks loss
             landmarks2d = concat_verts_ndc_2d[:,:68,:] # [N, 68, 3] normalized to -1.0 ~ 1.0
             loss_facial = fitting_util.l2_distance(landmarks2d[:, 17:, :2], gt_landmarks[:, 17:, :2])  # face 51 landmarks
-            loss_contour = fitting_util.l2_distance(landmarks2d[:, :17, :2], gt_landmarks[:, :17, :2]) # contour loss
-            # loss_eyes_contour = fitting_util.l2_distance(landmarks2d[:, 36:47, :2], gt_landmarks[:, 36:47, :2])  # eyes contour landmarks
+            loss_jawline = fitting_util.l2_distance(landmarks2d[:, :17, :2], gt_landmarks[:, :17, :2]) # jawline loss
+            loss_eyes_contour = fitting_util.l2_distance(landmarks2d[:, 36:47, :2], gt_landmarks[:, 36:47, :2])  # eyes contour landmarks
 
             # ear landmarks loss
             EAR_LOSS_THRESHOLD = 0.2 # sometimes the detected ear landmarks are not accurate
@@ -945,7 +945,7 @@ class Tracker():
             loss_ear = loss_ear * 0.5
 
             # loss computation and optimization
-            loss = loss_facial + loss_contour + loss_ear
+            loss = loss_facial + loss_jawline + loss_eyes_contour + loss_ear
             e_opt_rigid.zero_grad()
             loss.backward()
             e_opt_rigid.step()
@@ -997,7 +997,7 @@ class Tracker():
             finetune_params = [
                 {'params': [d_tex], 'lr': 0.005}, 
                 {'params': [d_light], 'lr': 0.005},
-                {'params': [d_texture], 'lr': 0.05},
+                {'params': [d_texture], 'lr': 0.005},
                 {'params': [d_exp], 'lr': 0.005}, 
                 {'params': [d_jaw], 'lr': 0.005},
                 {'params': [eye_pose], 'lr': 0.005},
@@ -1083,7 +1083,8 @@ class Tracker():
 
             # face 68 landmarks loss
             loss_facial = fitting_util.l2_distance(landmarks2d[:, 17:, :2], gt_landmarks[:, 17:, :2])  # face 51 landmarks
-            loss_contour = fitting_util.l2_distance(landmarks2d[:, :17, :2], gt_landmarks[:, :17, :2]) # contour loss
+            loss_jawline = fitting_util.l2_distance(landmarks2d[:, :17, :2], gt_landmarks[:, :17, :2]) # jawline loss
+            loss_eyes_contour = fitting_util.l2_distance(landmarks2d[:, 36:47, :2], gt_landmarks[:, 36:47, :2])  # eyes contour landmarks
 
             # ear landmarks loss
             EAR_LOSS_THRESHOLD = 0.2 # sometimes the detected ear landmarks are not accurate
@@ -1104,7 +1105,7 @@ class Tracker():
             loss_reg_shape = (torch.sum(d_shape ** 2) / 2) * 1e-2 # 1e-4
             loss_reg_exp = (torch.sum((exp + d_exp) ** 2) / 2) * 1e-4 # 1e-3
             loss_reg = loss_reg_shape + loss_reg_exp # + loss_reg_tex
-            loss = loss_photo + loss_facial + loss_contour + loss_eyes + loss_ear + loss_reg
+            loss = loss_photo + loss_facial + loss_jawline + loss_eyes_contour + loss_eyes + loss_ear + loss_reg
             loss.backward()
             e_opt_fine.step()
 
