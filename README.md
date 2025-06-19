@@ -5,13 +5,16 @@
     <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT">
   </a>
   <br>
-  <span style="font-size:1.0em;">Note: This project depends on other third-party libraries or code, which may be licensed under different terms. When using this project, you are required to comply with the license terms of any dependencies in addition to the MIT License. Please review the licenses of all dependencies before use or distribution.</span>
+  <!-- <span style="font-size:1.0em;">Note: This project depends on other third-party libraries or code, which may be licensed under different terms. When using this project, you are required to comply with the license terms of any dependencies in addition to the MIT License. Please review the licenses of all dependencies before use or distribution.</span> -->
 </div>
 
 <div align="center"> 
   <b><img src="./assets/demo.gif" alt="drawing" width="600"/></b>
   <br>
 </div>
+
+> [!NOTE]
+> This project depends on other third-party libraries or code, which may be licensed under different terms. When using this project, you are required to comply with the license terms of any dependencies in addition to the MIT License. Please review the licenses of all dependencies before use or distribution.
 
 **Current Version**: v3.4 (June 18, 2025)
 
@@ -233,7 +236,8 @@ pip install -r requirements.txt
 
 ### 3️⃣ Step 3: Download necessary model files.
 
-Because of copyright concerns, we cannot re-share some model files. Please follow the instructions to download the necessary model file.
+> [!NOTE]
+> Because of copyright concerns, we cannot re-share some model files. Please follow the instructions to download the necessary model file.
 
 
 #### FLAME 

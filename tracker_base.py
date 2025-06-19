@@ -467,7 +467,7 @@ class Tracker():
     def load_image_and_run(self, 
                            img_path, realign=True, 
                            photometric_fitting=False,
-                           prev_ret_dict=None, shape_code=None):
+                           prev_ret_dict=None, shape_code=None, d_texture=None):
         """
         Load image from given path, then run FLAME tracking
         input:
@@ -476,14 +476,15 @@ class Tracker():
             -photometric_fitting: whether to use photometric fitting or landmarks only
             -prev_ret_dict: the results dictionary from the previous frame
             -shape_code: the pre-estimated global shape code
+            -d_texture: texture map offsets
         output:
             -ret_dict: results dictionary
         """
         img = read_img(img_path)
-        return self.run(img, realign, photometric_fitting, prev_ret_dict, shape_code)
+        return self.run(img, realign, photometric_fitting, prev_ret_dict, shape_code, d_texture)
 
     
-    def run(self, img, realign=True, photometric_fitting=False, prev_ret_dict=None, shape_code=None):
+    def run(self, img, realign=True, photometric_fitting=False, prev_ret_dict=None, shape_code=None, d_texture=None):
         """
         Run FLAME tracking on the given image
         input:
@@ -492,11 +493,15 @@ class Tracker():
             -photometric_fitting: whether to use photometric fitting or landmarks only
             -prev_ret_dict: the results dictionary from the previous frame
             -shape_code: the pre-estimated global shape code
+            -d_texture: texture map offsets
         output:
             -ret_dict: results dictionary
         """
         in_dict = self.prepare_intermediate_data_from_image(img = img, realign = realign)
         if in_dict is None: return None
+
+        if d_texture is not None:
+            in_dict['d_texture'] = d_texture
 
         if photometric_fitting:
             # run photometric fitting
@@ -528,7 +533,6 @@ class Tracker():
             ret_dict['lmks_ears'] = in_dict['gt_ear_landmarks']
         ret_dict['lmks_eyes'] = in_dict['gt_eye_landmarks']
         ret_dict['blendshape_scores'] = in_dict['blendshape_scores']
-        # ret_dict['fov'] = self.fov
         return ret_dict
     
 
@@ -987,11 +991,12 @@ class Tracker():
         d_light = nn.Parameter(d_light.float().to(self.device))
 
         # prepare texture map residual (to be optimized)
-        if continue_fit:
-            d_texture = torch.from_numpy(prev_ret_dict['d_texture']).to(self.device).detach()
+        if 'd_texture' in in_dict.keys():
+            #d_texture = torch.from_numpy(prev_ret_dict['d_texture']).to(self.device).detach()
+            d_texture = torch.from_numpy(in_dict['d_texture'])
         else:
             d_texture = torch.zeros([batch_size, 3, 256, 256])
-            d_texture = nn.Parameter(d_texture.float().to(self.device))
+        d_texture = nn.Parameter(d_texture.float().to(self.device))
 
         if continue_fit == False:
             finetune_params = [
@@ -1006,6 +1011,7 @@ class Tracker():
             ]
         else:
             finetune_params = [
+                {'params': [d_texture], 'lr': 0.0001},
                 {'params': [d_exp], 'lr': 0.005}, 
                 {'params': [d_jaw], 'lr': 0.005},
                 {'params': [eye_pose], 'lr': 0.005},
@@ -1025,14 +1031,14 @@ class Tracker():
             weight_decay=0.0001
         )
 
-        # flame texture model
-        with torch.no_grad():
-            texture = torch.clamp(self.flametex(tex + d_tex) + d_texture, 0.0, 1.0)  # [N, 3, 256, 256]
+        # # flame texture model
+        # with torch.no_grad():
+        #     texture = torch.clamp(self.flametex(tex + d_tex) + d_texture, 0.0, 1.0)  # [N, 3, 256, 256]
 
         # optimization loop
         if continue_fit:
             # continue to fit on the next video frame
-            total_iterations = 200
+            total_iterations = 300
         else:
             # initial fitting, take longer time
             total_iterations = 800
@@ -1051,8 +1057,8 @@ class Tracker():
                                         neck_pose_params=optimized_neck_pose,
                                         eye_pose_params=eye_pose) # [1, V, 3]
             
-            if continue_fit == False:
-                texture = torch.clamp(self.flametex(tex + d_tex) + d_texture, 0.0, 1.0)  # [N, 3, 256, 256]
+            # if continue_fit == False:
+            texture = torch.clamp(self.flametex(tex + d_tex) + d_texture, 0.0, 1.0)  # [N, 3, 256, 256]
 
             # project the vertices to 2D
             verts_clip = batch_perspective_projection(verts=vertices, camera_pose=optimized_camera_pose, 

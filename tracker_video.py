@@ -88,6 +88,7 @@ def track_video(tracker_cfg):
     #######################
     print(f'>>> Processing video: {video_path}')
     prev_ret_dict = None
+    d_texture = None
     for fid in tqdm(range(len(frames))):
         if prev_ret_dict is None:
             # it's said mediapipe might fail on the first frame.. 
@@ -99,7 +100,8 @@ def track_video(tracker_cfg):
         #     continue
 
         # fit on the current frame
-        ret_dict = tracker.run(img=frames[fid], realign=True, photometric_fitting=photometric_fitting, prev_ret_dict=prev_ret_dict, shape_code=mean_shape_code)
+        ret_dict = tracker.run(img=frames[fid], realign=True, photometric_fitting=photometric_fitting, 
+                               prev_ret_dict=prev_ret_dict, shape_code=mean_shape_code, d_texture=d_texture)
         prev_ret_dict = copy.deepcopy(ret_dict)
         if ret_dict is None:
             continue
@@ -108,9 +110,9 @@ def track_video(tracker_cfg):
         save_file_path = os.path.join(result_save_path, f'{fid}.npz')
         if 'd_texture' in ret_dict.keys():
             texture_save_path = os.path.join(result_save_path, 'texture.png')
-            if not os.path.exists(texture_save_path):
-                img_texture = (np.transpose(ret_dict['texture'][0], (1, 2, 0)) * 255).clip(0, 255).astype(np.uint8)
-                cv2.imwrite(texture_save_path, cv2.cvtColor(img_texture, cv2.COLOR_RGB2BGR))
+            img_texture = (np.transpose(ret_dict['texture'][0], (1, 2, 0)) * 255).clip(0, 255).astype(np.uint8)
+            cv2.imwrite(texture_save_path, cv2.cvtColor(img_texture, cv2.COLOR_RGB2BGR))
+            d_texture = np.copy(ret_dict['d_texture']) # cache d_texture for the next frame
             # to save disk space
             del ret_dict['d_texture']
             del ret_dict['texture']
