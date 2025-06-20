@@ -16,10 +16,10 @@
 > [!NOTE]
 > This project depends on other third-party libraries or code, which may be licensed under different terms. When using this project, you are required to comply with the license terms of any dependencies in addition to the MIT License. Please review the licenses of all dependencies before use or distribution.
 
-**Current Version**: v3.4 (June 18, 2025)
+**Current Version**: v3.4 beta (June 18, 2025)
 
 **Previous Versions**:
-- v3.3 (https://github.com/PeizhiYan/flame-head-tracker/tree/v3.3)
+- v3.3 Stable (https://github.com/PeizhiYan/flame-head-tracker/tree/v3.3)
 - v3.2 Stable (https://github.com/PeizhiYan/flame-head-tracker/tree/v3.2)
 
 ## Supported Features:

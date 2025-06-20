@@ -42,14 +42,14 @@ def track_video(tracker_cfg):
     ## Setup Flame Tracker    #     
     ###########################
     tracker = Tracker(tracker_cfg)
-    tracker.set_landmark_detector('hybrid')
+    tracker.set_landmark_detector('mediapipe')
 
     ###############################
     ## Estimate Canonical Shape   #     
     ###############################
     print('>>> Estimating canonical shape code')
-    MAX_SAMPLE_SIZE = 5
-    frames_subset = frames[:MAX_SAMPLE_SIZE] # we take the first few frames to estimate the canonical shape code
+    MAX_SAMPLE_SIZE = 10
+    frames_subset = random.sample(frames, min(MAX_SAMPLE_SIZE, len(frames)))  # randomly sample frames
     with torch.no_grad():
         mean_shape_code = np.zeros([1,tracker.NUM_SHAPE_COEFFICIENTS], dtype=np.float32)
         counter = 0

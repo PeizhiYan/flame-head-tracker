@@ -507,7 +507,7 @@ class Tracker():
             face_mask = get_face_mask(parsing=parsing_mask, 
                                       keep_mouth = False, 
                                       keep_ears = True,
-                                      keep_neck = self.USE_NECK_POSE) # [512,512]
+                                      keep_neck = True) # [512,512]
             in_dict['face_mask'] = face_mask
             # run photometric fitting
             ret_dict = self.run_fitting_photometric(in_dict=in_dict, prev_ret_dict=prev_ret_dict, shape_code=shape_code)
@@ -840,7 +840,10 @@ class Tracker():
                 # use pre-estimated global shape code
                 params[key] = shape_code
             else:
-                params[key] = in_dict[key]
+                if continue_fit and key in ['head_pose', 'light']:
+                    params[key] = prev_ret_dict[key]  # use previous frame's light
+                else:
+                    params[key] = in_dict[key]
 
         # prepare ground truth face mask
         face_mask = in_dict['face_mask']
@@ -906,7 +909,7 @@ class Tracker():
         
         # optimization loop
         max_iterations = 1500
-        early_stopper = EarlyStopping(window_size=10, slope_threshold=-1e-5, flat_patience=3, verbose=False)
+        early_stopper = EarlyStopping(window_size=10, slope_threshold=-0.5e-5, flat_patience=3, verbose=False)
         for iter in range(max_iterations):
 
             # project the vertices to 2D
@@ -996,7 +999,7 @@ class Tracker():
         finetune_params = [
             {'params': [d_exp], 'lr': 0.005}, 
             {'params': [d_jaw], 'lr': 0.005},
-            {'params': [eye_pose], 'lr': 0.01},
+            {'params': [eye_pose], 'lr': 0.005},
             {'params': [d_light], 'lr': 0.005},
             {'params': [d_camera_translation], 'lr': 0.001}, 
             {'params': [d_camera_rotation], 'lr': 0.001},
@@ -1027,9 +1030,15 @@ class Tracker():
             texture = torch.clamp(self.flametex(tex + d_tex) + d_texture, 0.0, 1.0).detach()   # [N, 3, 256, 256]
             update_texture = True
 
+        # previous expression parameters
+        if continue_fit:
+            prev_exp = torch.tensor(prev_ret_dict['exp'], dtype=torch.float32).detach().to(self.device)
+        else:
+            prev_exp = exp
+
         # optimization loop
         max_iterations = 1000
-        early_stopper = EarlyStopping(window_size=10, slope_threshold=-1e-5, flat_patience=3, verbose=False)
+        early_stopper = EarlyStopping(window_size=10, slope_threshold=-0.5e-5, flat_patience=3, verbose=False)
         for iter in range(max_iterations):
 
             optimized_shape = shape + d_shape
@@ -1044,7 +1053,7 @@ class Tracker():
                                         neck_pose_params=optimized_neck_pose,
                                         eye_pose_params=eye_pose) # [1, V, 3]
             
-            if update_texture and iter > 50:
+            if update_texture and iter > 100:
                 texture = torch.clamp(self.flametex(tex + d_tex) + d_texture, 0.0, 1.0)  # [N, 3, 256, 256]
 
             # project the vertices to 2D
@@ -1075,8 +1084,8 @@ class Tracker():
                 photo_loss_mask = gt_face_mask
 
             # face 68 landmarks loss
-            loss_facial = fitting_util.l2_distance(landmarks2d[:, 17:, :2], gt_landmarks[:, 17:, :2]) *2 # face 51 landmarks
-            loss_jawline = fitting_util.l2_distance(landmarks2d[:, :17, :2], gt_landmarks[:, :17, :2])   # jawline loss
+            loss_facial = fitting_util.l2_distance(landmarks2d[:, 17:, :2], gt_landmarks[:, 17:, :2]) * 2  # face 51 landmarks
+            loss_jawline = fitting_util.l2_distance(landmarks2d[:, :17, :2], gt_landmarks[:, :17, :2])     # jawline loss
             # loss_eyes_contour = fitting_util.l2_distance(landmarks2d[:, 36:47, :2], gt_landmarks[:, 36:47, :2])  # eyes contour landmarks
 
             # ear landmarks loss
@@ -1090,23 +1099,25 @@ class Tracker():
                 yaw_angle = camera_pose[0, 0].item()
                 ear_loss_discount = max(0.1, min(0.3, abs(yaw_angle))) / 0.3
                 loss_ear = loss_ear * ear_loss_discount
-            loss_ear = loss_ear * 0.1
+            loss_ear = loss_ear * 0.5
 
             # loss computation and optimization
-            loss_photo = compute_batch_pixelwise_l1_loss(gt_img, rendered_textured, photo_loss_mask) * 5  # photometric loss
-            loss_eyes = fitting_util.l2_distance(eyes_landmarks2d, gt_eye_landmarks) * 2
-            loss_reg_shape = (torch.sum(d_shape ** 2) / 2) * 1e-2 # 1e-4
-            loss_reg_exp = (torch.sum((exp + d_exp) ** 2) / 2) * 1e-4 # 1e-3
-            loss_reg = loss_reg_shape + loss_reg_exp # + loss_reg_tex
+            loss_photo = compute_batch_pixelwise_l1_loss(gt_img, rendered_textured, photo_loss_mask) * 8  # photometric loss
+            loss_eyes = fitting_util.l2_distance(eyes_landmarks2d, gt_eye_landmarks) * 3
+            loss_reg_shape = (torch.sum(d_shape ** 2) / 2) * 1e-4 # 1e-4
+            loss_reg_exp = (torch.sum(optimized_exp ** 2) / 2) * 1e-3 # 1e-3
+            loss_reg_exp_smooth = (torch.sum((prev_exp - optimized_exp) ** 2) / 2) * 1e-3 
+            loss_reg = loss_reg_shape + loss_reg_exp + loss_reg_exp_smooth # + loss_reg_tex
             loss = loss_photo + loss_facial + loss_jawline + loss_eyes + loss_ear + loss_reg
-            
+
             # early stopping
-            current_loss = loss.item()
-            early_stopper(current_loss)
-            if early_stopper.early_stop:
-                # print("Stage 2 early stopping triggered at iter: ", iter)
-                e_opt_fine.zero_grad()
-                break
+            if not update_texture:
+                current_loss = loss.item()
+                early_stopper(current_loss)
+                if early_stopper.early_stop:
+                    # print("Stage 2 early stopping triggered at iter: ", iter)
+                    e_opt_fine.zero_grad()
+                    break
 
             # optimization step
             e_opt_fine.zero_grad()
@@ -1128,7 +1139,7 @@ class Tracker():
                                         jaw_pose_params=optimized_jaw_pose,
                                         neck_pose_params=optimized_neck_pose,
                                         eye_pose_params=eye_pose) # [1, V, 3]
-            
+
             if update_texture:
                 texture = torch.clamp(self.flametex(tex + d_tex) + d_texture, 0.0, 1.0) # [N, 3, 256, 256]
             
