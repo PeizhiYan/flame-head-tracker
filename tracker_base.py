@@ -612,10 +612,10 @@ class Tracker():
         
         # optimization loop
         max_iterations = 1500
-        early_stopper = EarlyStopping(window_size=10, slope_threshold=-1e-5, flat_patience=3, verbose=False)
+        early_stopper = EarlyStopping(window_size=10, slope_threshold=-0.5e-5, flat_patience=3, verbose=False)
         for iter in range(max_iterations):
 
-            l_f = 400; l_c = 200 # more weights to face
+            l_f = 500; l_c = 100 # more weights to face
 
             # project the vertices to 2D
             optimized_camera_pose = camera_pose + torch.cat([d_camera_rotation, d_camera_translation], dim=-1) # [N, 6]
@@ -918,9 +918,9 @@ class Tracker():
 
             # face 68 landmarks loss
             landmarks2d = concat_verts_ndc_2d[:,:68,:] # [N, 68, 3] normalized to -1.0 ~ 1.0
-            loss_facial = fitting_util.l2_distance(landmarks2d[:, 17:, :2], gt_landmarks[:, 17:, :2])  # face 51 landmarks
-            loss_jawline = fitting_util.l2_distance(landmarks2d[:, :17, :2], gt_landmarks[:, :17, :2]) # jawline loss
-            loss_eyes_contour = fitting_util.l2_distance(landmarks2d[:, 36:47, :2], gt_landmarks[:, 36:47, :2])  # eyes contour landmarks
+            loss_facial = fitting_util.l2_distance(landmarks2d[:, 17:, :2], gt_landmarks[:, 17:, :2]) * 2  # face 51 landmarks
+            loss_jawline = fitting_util.l2_distance(landmarks2d[:, :17, :2], gt_landmarks[:, :17, :2])     # jawline loss
+            # loss_eyes_contour = fitting_util.l2_distance(landmarks2d[:, 36:47, :2], gt_landmarks[:, 36:47, :2])  # eyes contour landmarks
 
             # ear landmarks loss
             EAR_LOSS_THRESHOLD = 0.2 # sometimes the detected ear landmarks are not accurate
@@ -938,7 +938,7 @@ class Tracker():
             loss_ear = loss_ear * 0.5
 
             # loss computation
-            loss = loss_facial + loss_jawline + loss_eyes_contour + loss_ear
+            loss = loss_facial + loss_jawline + loss_ear
 
             # early stopping
             current_loss = loss.item()
@@ -993,24 +993,14 @@ class Tracker():
         d_texture = torch.zeros([batch_size, 3, 256, 256])
         d_texture = nn.Parameter(d_texture.float().to(self.device))
 
-        if continue_fit == False:
-            finetune_params = [
-                {'params': [d_exp], 'lr': 0.005}, 
-                {'params': [d_jaw], 'lr': 0.005},
-                {'params': [eye_pose], 'lr': 0.005},
-                {'params': [d_light], 'lr': 0.005},
-                {'params': [d_camera_translation], 'lr': 0.001}, 
-                {'params': [d_camera_rotation], 'lr': 0.001},
-            ]
-        else:
-            finetune_params = [
-                {'params': [d_exp], 'lr': 0.005}, 
-                {'params': [d_jaw], 'lr': 0.005},
-                {'params': [eye_pose], 'lr': 0.005},
-                {'params': [d_light], 'lr': 0.005},
-                {'params': [d_camera_translation], 'lr': 0.001}, 
-                {'params': [d_camera_rotation], 'lr': 0.001},
-            ]
+        finetune_params = [
+            {'params': [d_exp], 'lr': 0.005}, 
+            {'params': [d_jaw], 'lr': 0.005},
+            {'params': [eye_pose], 'lr': 0.01},
+            {'params': [d_light], 'lr': 0.005},
+            {'params': [d_camera_translation], 'lr': 0.001}, 
+            {'params': [d_camera_rotation], 'lr': 0.001},
+        ]
         if shape_code is None and not continue_fit:
             finetune_params.append({'params': [d_shape], 'lr': 0.005})
         if self.USE_HEAD_POSE:
@@ -1054,7 +1044,7 @@ class Tracker():
                                         neck_pose_params=optimized_neck_pose,
                                         eye_pose_params=eye_pose) # [1, V, 3]
             
-            if update_texture and iter > 10:
+            if update_texture and iter > 50:
                 texture = torch.clamp(self.flametex(tex + d_tex) + d_texture, 0.0, 1.0)  # [N, 3, 256, 256]
 
             # project the vertices to 2D
@@ -1085,9 +1075,9 @@ class Tracker():
                 photo_loss_mask = gt_face_mask
 
             # face 68 landmarks loss
-            loss_facial = fitting_util.l2_distance(landmarks2d[:, 17:, :2], gt_landmarks[:, 17:, :2])  # face 51 landmarks
-            loss_jawline = fitting_util.l2_distance(landmarks2d[:, :17, :2], gt_landmarks[:, :17, :2]) # jawline loss
-            loss_eyes_contour = fitting_util.l2_distance(landmarks2d[:, 36:47, :2], gt_landmarks[:, 36:47, :2])  # eyes contour landmarks
+            loss_facial = fitting_util.l2_distance(landmarks2d[:, 17:, :2], gt_landmarks[:, 17:, :2]) *2 # face 51 landmarks
+            loss_jawline = fitting_util.l2_distance(landmarks2d[:, :17, :2], gt_landmarks[:, :17, :2])   # jawline loss
+            # loss_eyes_contour = fitting_util.l2_distance(landmarks2d[:, 36:47, :2], gt_landmarks[:, 36:47, :2])  # eyes contour landmarks
 
             # ear landmarks loss
             EAR_LOSS_THRESHOLD = 0.2 # sometimes the detected ear landmarks are not accurate
@@ -1103,12 +1093,12 @@ class Tracker():
             loss_ear = loss_ear * 0.1
 
             # loss computation and optimization
-            loss_photo = compute_batch_pixelwise_l1_loss(gt_img, rendered_textured, photo_loss_mask) * 8  # photometric loss
-            loss_eyes = fitting_util.l2_distance(eyes_landmarks2d, gt_eye_landmarks) * 5
+            loss_photo = compute_batch_pixelwise_l1_loss(gt_img, rendered_textured, photo_loss_mask) * 5  # photometric loss
+            loss_eyes = fitting_util.l2_distance(eyes_landmarks2d, gt_eye_landmarks) * 2
             loss_reg_shape = (torch.sum(d_shape ** 2) / 2) * 1e-2 # 1e-4
             loss_reg_exp = (torch.sum((exp + d_exp) ** 2) / 2) * 1e-4 # 1e-3
             loss_reg = loss_reg_shape + loss_reg_exp # + loss_reg_tex
-            loss = loss_photo + loss_facial + loss_jawline + loss_eyes_contour + loss_eyes + loss_ear + loss_reg
+            loss = loss_photo + loss_facial + loss_jawline + loss_eyes + loss_ear + loss_reg
             
             # early stopping
             current_loss = loss.item()
