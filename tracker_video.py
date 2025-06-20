@@ -29,6 +29,7 @@ def track_video(tracker_cfg):
     video_path = tracker_cfg['video_path']
     save_path = tracker_cfg['save_path']
     photometric_fitting = tracker_cfg['photometric_fitting']
+    realign = tracker_cfg['realign']
 
     video_base_name = os.path.basename(video_path)
     video_name = video_base_name.split('.')[0] # remove the name extension
@@ -41,27 +42,7 @@ def track_video(tracker_cfg):
     ## Setup Flame Tracker    #     
     ###########################
     tracker = Tracker(tracker_cfg)
-    tracker.set_landmark_detector('hybrid')
-
-    # #########################
-    # ## Estimate Camera FOV  #     
-    # #########################
-    # if photometric_fitting:
-    #     print('>>> Estimating FOV')
-    #     best_fov = None
-    #     min_loss = float('inf')
-    #     img = frames[0] # use the first frame
-    #     in_dict = tracker.prepare_intermediate_data_from_image(img = img, realign = True)
-    #     for fov in [10, 15, 20, 25, 30, 35, 40]:
-    #         tracker.update_fov(fov)
-    #         ret_dict, lmks_loss = tracker.run_fitting(in_dict, prev_ret_dict = None, shape_code = None, return_lmks_loss = True)
-    #         if lmks_loss < min_loss:
-    #             min_loss = lmks_loss
-    #             best_fov = fov
-    #         else:
-    #             break
-    #     tracker.update_fov(best_fov)
-    #     print('>>> Set FOV to ', best_fov)
+    tracker.set_landmark_detector('mediapipe')
 
     ###############################
     ## Estimate Canonical Shape   #     
@@ -74,7 +55,7 @@ def track_video(tracker_cfg):
         counter = 0
         for i in tqdm(range(len(frames_subset))):
             img = frames_subset[i]
-            in_dict = tracker.prepare_intermediate_data_from_image(img, realign=True) # run reconstruction models
+            in_dict = tracker.prepare_intermediate_data_from_image(img, realign=realign) # run reconstruction models
             if in_dict is not None:
                 mean_shape_code += in_dict['shape']
                 counter += 1
@@ -100,7 +81,7 @@ def track_video(tracker_cfg):
         #     continue
 
         # fit on the current frame
-        ret_dict = tracker.run(img=frames[fid], realign=True, photometric_fitting=photometric_fitting, 
+        ret_dict = tracker.run(img=frames[fid], realign=realign, photometric_fitting=photometric_fitting, 
                                prev_ret_dict=prev_ret_dict, shape_code=mean_shape_code, d_texture=d_texture)
         prev_ret_dict = copy.deepcopy(ret_dict)
         if ret_dict is None:
@@ -110,8 +91,9 @@ def track_video(tracker_cfg):
         save_file_path = os.path.join(result_save_path, f'{fid}.npz')
         if 'd_texture' in ret_dict.keys():
             texture_save_path = os.path.join(result_save_path, 'texture.png')
-            img_texture = (np.transpose(ret_dict['texture'][0], (1, 2, 0)) * 255).clip(0, 255).astype(np.uint8)
-            cv2.imwrite(texture_save_path, cv2.cvtColor(img_texture, cv2.COLOR_RGB2BGR))
+            if not os.path.exists(texture_save_path):
+                img_texture = (np.transpose(ret_dict['texture'][0], (1, 2, 0)) * 255).clip(0, 255).astype(np.uint8)
+                cv2.imwrite(texture_save_path, cv2.cvtColor(img_texture, cv2.COLOR_RGB2BGR))
             d_texture = np.copy(ret_dict['d_texture']) # cache d_texture for the next frame
             # to save disk space
             del ret_dict['d_texture']

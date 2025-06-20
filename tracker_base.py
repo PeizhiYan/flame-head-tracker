@@ -492,25 +492,25 @@ class Tracker():
             -realign: for FFHQ, use False. for in-the-wild images, use True
             -photometric_fitting: whether to use photometric fitting or landmarks only
             -prev_ret_dict: the results dictionary from the previous frame
-            -shape_code: the pre-estimated global shape code
-            -d_texture: texture map offsets
+            -shape_code: (optional) the pre-estimated global shape code
+            -d_texture: (optional, only used in photometric video tracking) texture map offsets
         output:
             -ret_dict: results dictionary
         """
         in_dict = self.prepare_intermediate_data_from_image(img = img, realign = realign)
         if in_dict is None: return None
 
-        if d_texture is not None:
-            in_dict['d_texture'] = d_texture
-
         if photometric_fitting:
-            # run photometric fitting
+            if d_texture is not None:
+                in_dict['d_texture'] = d_texture
             parsing_mask = in_dict['parsing'][0] # [512,512]
             face_mask = get_face_mask(parsing=parsing_mask, 
                                       keep_mouth = False, 
                                       keep_ears = True,
                                       keep_neck = self.USE_NECK_POSE) # [512,512]
-            ret_dict = self.run_fitting_photometric(face_mask, in_dict, prev_ret_dict, shape_code)
+            in_dict['face_mask'] = face_mask
+            # run photometric fitting
+            ret_dict = self.run_fitting_photometric(in_dict=in_dict, prev_ret_dict=prev_ret_dict, shape_code=shape_code)
         else:
             # run facial landmark-based fitting
             ret_dict = self.run_fitting(in_dict=in_dict, prev_ret_dict=prev_ret_dict, shape_code=shape_code)
@@ -826,7 +826,7 @@ class Tracker():
             return ret_dict
 
 
-    def run_fitting_photometric(self, face_mask, in_dict, prev_ret_dict = None, shape_code : np.array = None):
+    def run_fitting_photometric(self, in_dict, prev_ret_dict = None, shape_code : np.array = None):
         """ Landmark + Photometric Fitting        
             - Stage 1: rigid fitting on the camera pose (6DoF)
             - Stage 2: fine-tune the parameters
@@ -851,6 +851,7 @@ class Tracker():
                     params[key] = in_dict[key]
 
         # prepare ground truth face mask
+        face_mask = in_dict['face_mask']
         face_mask_resized = cv2.resize(face_mask, (self.RENDER_SIZE, self.RENDER_SIZE))   # [256,256]
         gt_face_mask = torch.from_numpy(face_mask_resized)[None].detach().to(self.device) # [1,256,256] boolean
 
@@ -1000,9 +1001,6 @@ class Tracker():
 
         if continue_fit == False:
             finetune_params = [
-                {'params': [d_tex], 'lr': 0.005}, 
-                {'params': [d_light], 'lr': 0.005},
-                {'params': [d_texture], 'lr': 0.005},
                 {'params': [d_exp], 'lr': 0.005}, 
                 {'params': [d_jaw], 'lr': 0.005},
                 {'params': [eye_pose], 'lr': 0.005},
@@ -1011,7 +1009,6 @@ class Tracker():
             ]
         else:
             finetune_params = [
-                {'params': [d_texture], 'lr': 0.0001},
                 {'params': [d_exp], 'lr': 0.005}, 
                 {'params': [d_jaw], 'lr': 0.005},
                 {'params': [eye_pose], 'lr': 0.005},
@@ -1024,6 +1021,14 @@ class Tracker():
             finetune_params.append({'params': [d_head], 'lr': 0.001})
         if self.USE_NECK_POSE:
             finetune_params.append({'params': [d_neck], 'lr': 0.01})
+        if 'd_texture' not in in_dict.keys():
+            # learn the texture map residual first time
+            finetune_params.append({'params': [d_texture], 'lr': 0.005})
+            finetune_params.append({'params': [d_tex], 'lr': 0.005})
+            finetune_params.append({'params': [d_light], 'lr': 0.005})
+            update_texture = True
+        else:
+            update_texture = False
 
         # fine optimizer
         e_opt_fine = torch.optim.Adam(
@@ -1031,9 +1036,9 @@ class Tracker():
             weight_decay=0.0001
         )
 
-        # # flame texture model
-        # with torch.no_grad():
-        #     texture = torch.clamp(self.flametex(tex + d_tex) + d_texture, 0.0, 1.0)  # [N, 3, 256, 256]
+        # initialize the texture map
+        with torch.no_grad():
+            texture = torch.clamp(self.flametex(tex + d_tex) + d_texture, 0.0, 1.0)  # [N, 3, 256, 256]
 
         # optimization loop
         if continue_fit:
@@ -1057,8 +1062,8 @@ class Tracker():
                                         neck_pose_params=optimized_neck_pose,
                                         eye_pose_params=eye_pose) # [1, V, 3]
             
-            # if continue_fit == False:
-            texture = torch.clamp(self.flametex(tex + d_tex) + d_texture, 0.0, 1.0)  # [N, 3, 256, 256]
+            if update_texture and iter > 100:
+                texture = torch.clamp(self.flametex(tex + d_tex) + d_texture, 0.0, 1.0)  # [N, 3, 256, 256]
 
             # project the vertices to 2D
             verts_clip = batch_perspective_projection(verts=vertices, camera_pose=optimized_camera_pose, 
