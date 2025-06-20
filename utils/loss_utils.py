@@ -1,8 +1,9 @@
 #
-## Copyright (C) Peizhi Yan. 2024
+## Copyright (C) Peizhi Yan. 2025
 #
 
 import torch
+import numpy as np
 
 
 def compute_batch_pixelwise_l1_loss(gt_imgs, pred_imgs, gt_face_masks):
@@ -31,5 +32,60 @@ def compute_batch_pixelwise_l1_loss(gt_imgs, pred_imgs, gt_face_masks):
     return l1_loss.mean()
 
 
+class EarlyStopping:
+    def __init__(self, window_size=10, slope_threshold=-1e-4, flat_patience=3, verbose=False):
+        """
+        Early stopping based on loss curve slope.
 
+        Args:
+            window_size (int): Number of recent losses to consider for trend estimation.
+            slope_threshold (float): Minimum slope (negative) to qualify as improving.
+            flat_patience (int): Number of consecutive flat/slightly increasing slopes before stopping.
+            verbose (bool): If True, prints status each check.
+        """
+        self.window_size = window_size
+        self.slope_threshold = slope_threshold
+        self.flat_patience = flat_patience
+        self.verbose = verbose
+
+        self.loss_history = []
+        self.flat_count = 0
+        self.early_stop = False
+        self._last_slope = None
+
+    def __call__(self, current_loss):
+        self.loss_history.append(current_loss)
+
+        if len(self.loss_history) < self.window_size:
+            return  # Not enough data to evaluate
+
+        # Calculate slope over the last window
+        y = np.array(self.loss_history[-self.window_size:])
+        x = np.arange(len(y))
+        slope = np.polyfit(x, y, 1)[0]
+        self._last_slope = slope
+
+        if self.verbose:
+            print(f"[EarlyStopping] Slope: {slope:.6f}, Flat count: {self.flat_count}")
+
+        if slope > self.slope_threshold:
+            self.flat_count += 1
+            if self.flat_count >= self.flat_patience:
+                self.early_stop = True
+                if self.verbose:
+                    print("[EarlyStopping] Triggered early stop.")
+        else:
+            self.flat_count = 0  # reset if improving
+
+    def reset(self):
+        """Resets the early stopping state (if reusing the object)."""
+        self.loss_history.clear()
+        self.flat_count = 0
+        self.early_stop = False
+        self._last_slope = None
+
+    def last_slope(self):
+        """Returns the most recent slope of the loss curve."""
+        return self._last_slope
+    
 

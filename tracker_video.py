@@ -42,7 +42,7 @@ def track_video(tracker_cfg):
     ## Setup Flame Tracker    #     
     ###########################
     tracker = Tracker(tracker_cfg)
-    tracker.set_landmark_detector('mediapipe')
+    tracker.set_landmark_detector('hybrid')
 
     ###############################
     ## Estimate Canonical Shape   #     
@@ -69,7 +69,7 @@ def track_video(tracker_cfg):
     #######################
     print(f'>>> Processing video: {video_path}')
     prev_ret_dict = None
-    d_texture = None
+    texture = None
     for fid in tqdm(range(len(frames))):
         if prev_ret_dict is None:
             # it's said mediapipe might fail on the first frame.. 
@@ -82,28 +82,31 @@ def track_video(tracker_cfg):
 
         # fit on the current frame
         ret_dict = tracker.run(img=frames[fid], realign=realign, photometric_fitting=photometric_fitting, 
-                               prev_ret_dict=prev_ret_dict, shape_code=mean_shape_code, d_texture=d_texture)
-        prev_ret_dict = copy.deepcopy(ret_dict)
+                               prev_ret_dict=prev_ret_dict, shape_code=mean_shape_code, texture=texture)
         if ret_dict is None:
+            # cannot fit the current frame, skip it
+            print(f'>>> Frame {fid} cannot be fitted, skipping...')
+            prev_ret_dict = copy.deepcopy(prev_ret_dict)
             continue
+        else:
+            prev_ret_dict = copy.deepcopy(ret_dict)
 
-        # save
-        save_file_path = os.path.join(result_save_path, f'{fid}.npz')
-        if 'd_texture' in ret_dict.keys():
+        # save texture map
+        if 'texture' in ret_dict.keys():
             texture_save_path = os.path.join(result_save_path, 'texture.png')
             if not os.path.exists(texture_save_path):
                 img_texture = (np.transpose(ret_dict['texture'][0], (1, 2, 0)) * 255).clip(0, 255).astype(np.uint8)
                 cv2.imwrite(texture_save_path, cv2.cvtColor(img_texture, cv2.COLOR_RGB2BGR))
-            d_texture = np.copy(ret_dict['d_texture']) # cache d_texture for the next frame
+            texture = np.copy(ret_dict['texture']) # cache d_texture for the next frame
             # to save disk space
-            del ret_dict['d_texture']
             del ret_dict['texture']
+        
+        # save other data
+        save_file_path = os.path.join(result_save_path, f'{fid}.npz')
         np.savez_compressed(save_file_path, **ret_dict)
 
         # check result: reconstruct from saved parameters and save the visualization results
         with torch.no_grad():
-            # with open(save_file_path, 'rb') as f:
-            #     loaded_params = pickle.load(f)
             loaded_params = np.load(save_file_path)
             img = ret_dict['img'][0]
 

@@ -467,7 +467,7 @@ class Tracker():
     def load_image_and_run(self, 
                            img_path, realign=True, 
                            photometric_fitting=False,
-                           prev_ret_dict=None, shape_code=None, d_texture=None):
+                           prev_ret_dict=None, shape_code=None, texture=None):
         """
         Load image from given path, then run FLAME tracking
         input:
@@ -476,15 +476,15 @@ class Tracker():
             -photometric_fitting: whether to use photometric fitting or landmarks only
             -prev_ret_dict: the results dictionary from the previous frame
             -shape_code: the pre-estimated global shape code
-            -d_texture: texture map offsets
+            -texture: texture map
         output:
             -ret_dict: results dictionary
         """
         img = read_img(img_path)
-        return self.run(img, realign, photometric_fitting, prev_ret_dict, shape_code, d_texture)
+        return self.run(img, realign, photometric_fitting, prev_ret_dict, shape_code, texture)
 
     
-    def run(self, img, realign=True, photometric_fitting=False, prev_ret_dict=None, shape_code=None, d_texture=None):
+    def run(self, img, realign=True, photometric_fitting=False, prev_ret_dict=None, shape_code=None, texture=None):
         """
         Run FLAME tracking on the given image
         input:
@@ -493,7 +493,7 @@ class Tracker():
             -photometric_fitting: whether to use photometric fitting or landmarks only
             -prev_ret_dict: the results dictionary from the previous frame
             -shape_code: (optional) the pre-estimated global shape code
-            -d_texture: (optional, only used in photometric video tracking) texture map offsets
+            -texture: (optional, only used in photometric video tracking) texture map
         output:
             -ret_dict: results dictionary
         """
@@ -501,8 +501,8 @@ class Tracker():
         if in_dict is None: return None
 
         if photometric_fitting:
-            if d_texture is not None:
-                in_dict['d_texture'] = d_texture
+            if texture is not None:
+                in_dict['texture'] = texture
             parsing_mask = in_dict['parsing'][0] # [512,512]
             face_mask = get_face_mask(parsing=parsing_mask, 
                                       keep_mouth = False, 
@@ -600,8 +600,8 @@ class Tracker():
         d_camera_rotation = nn.Parameter(torch.zeros([batch_size, 3], dtype=torch.float32, device=self.device))
         d_camera_translation = nn.Parameter(torch.zeros([batch_size, 3], dtype=torch.float32, device=self.device))
         camera_params = [
-            {'params': [d_camera_translation], 'lr': 0.05}, 
-            {'params': [d_camera_rotation], 'lr': 0.05}
+            {'params': [d_camera_translation], 'lr': 0.01}, 
+            {'params': [d_camera_rotation], 'lr': 0.01}
         ]
 
         # camera pose optimizer
@@ -611,31 +611,11 @@ class Tracker():
         )
         
         # optimization loop
-        if continue_fit:
-            # continue to fit on the next video frame
-            total_iterations = 200
-        else:
-            # initial fitting, take longer time
-            total_iterations = 1000
-        for iter in range(total_iterations):
+        max_iterations = 1500
+        early_stopper = EarlyStopping(window_size=10, slope_threshold=-1e-5, flat_patience=3, verbose=False)
+        for iter in range(max_iterations):
 
-            if continue_fit == False:
-                ## initial fitting
-                # update learning rate
-                if iter == 700:
-                    e_opt_rigid.param_groups[0]['lr'] = 0.005    # For translation
-                    e_opt_rigid.param_groups[1]['lr'] = 0.01     # For rotation
-                # update loss term weights
-                if iter <= 700: l_f = 100; l_c = 500 # more weights to contour
-                else: l_f = 500; l_c = 100 # more weights to face
-            else:
-                ## continue fitting
-                # update learning rate
-                e_opt_rigid.param_groups[0]['lr'] = 0.005    # For translation
-                e_opt_rigid.param_groups[1]['lr'] = 0.01     # For rotation
-                # update loss term weights
-                if iter <= 100: l_f = 100; l_c = 500 # more weights to contour
-                else: l_f = 500; l_c = 100 # more weights to face
+            l_f = 400; l_c = 200 # more weights to face
 
             # project the vertices to 2D
             optimized_camera_pose = camera_pose + torch.cat([d_camera_rotation, d_camera_translation], dim=-1) # [N, 6]
@@ -664,8 +644,17 @@ class Tracker():
                 ear_loss_discount = max(0.1, min(0.3, abs(yaw_angle))) / 0.3
                 loss_ear = loss_ear * ear_loss_discount
             loss_ear = loss_ear * 150
-
             loss = loss_facial + loss_jawline + loss_ear
+
+            # early stopping
+            current_loss = loss.item()
+            early_stopper(current_loss)
+            if early_stopper.early_stop:
+                # print("Stage 1 early stopping triggered at iter: ", iter)
+                e_opt_rigid.zero_grad()
+                break
+
+            # optimization step
             e_opt_rigid.zero_grad()
             loss.backward()
             e_opt_rigid.step()
@@ -729,13 +718,9 @@ class Tracker():
         )
 
         # optimization loop
-        for iter in range(200):
-
-            # update learning rate
-            if iter == 100:
-                e_opt_fine.param_groups[0]['lr'] = 0.005    
-                e_opt_fine.param_groups[1]['lr'] = 0.01     
-                e_opt_fine.param_groups[2]['lr'] = 0.01     
+        max_iterations = 800
+        early_stopper = EarlyStopping(window_size=10, slope_threshold=-1e-5, flat_patience=3, verbose=False)
+        for iter in range(max_iterations):
 
             optimized_shape = shape + d_shape
             optimized_exp = exp + d_exp
@@ -765,6 +750,16 @@ class Tracker():
             loss_eyes = fitting_util.l2_distance(eyes_landmarks2d, gt_eye_landmarks) * 500
             loss_reg_exp = torch.sum(optimized_exp**2) * 0.025 # regularization on expression coefficients
             loss = loss_facial + loss_eyes + loss_reg_exp
+
+            # early stopping
+            current_loss = loss.item()
+            early_stopper(current_loss)
+            if early_stopper.early_stop:
+                # print("Stage 2 early stopping triggered at iter: ", iter)
+                e_opt_fine.zero_grad()
+                break
+
+            # optimization step
             e_opt_fine.zero_grad()
             loss.backward()
             e_opt_fine.step()
@@ -845,10 +840,7 @@ class Tracker():
                 # use pre-estimated global shape code
                 params[key] = shape_code
             else:
-                if continue_fit == True and key in ['tex', 'light']:
-                    params[key] = prev_ret_dict[key]
-                else:
-                    params[key] = in_dict[key]
+                params[key] = in_dict[key]
 
         # prepare ground truth face mask
         face_mask = in_dict['face_mask']
@@ -913,13 +905,9 @@ class Tracker():
         )
         
         # optimization loop
-        if continue_fit:
-            # continue to fit on the next video frame
-            total_iterations = 200
-        else:
-            # initial fitting, take longer time
-            total_iterations = 500
-        for iter in range(total_iterations):
+        max_iterations = 1500
+        early_stopper = EarlyStopping(window_size=10, slope_threshold=-1e-5, flat_patience=3, verbose=False)
+        for iter in range(max_iterations):
 
             # project the vertices to 2D
             optimized_camera_pose = camera_pose + torch.cat([d_camera_rotation, d_camera_translation], dim=-1) # [N, 6]
@@ -949,8 +937,18 @@ class Tracker():
                 loss_ear = loss_ear * ear_loss_discount
             loss_ear = loss_ear * 0.5
 
-            # loss computation and optimization
+            # loss computation
             loss = loss_facial + loss_jawline + loss_eyes_contour + loss_ear
+
+            # early stopping
+            current_loss = loss.item()
+            early_stopper(current_loss)
+            if early_stopper.early_stop:
+                # print("Stage 1 early stopping triggered at iter: ", iter)
+                e_opt_rigid.zero_grad()
+                break
+
+            # optimization step
             e_opt_rigid.zero_grad()
             loss.backward()
             e_opt_rigid.step()
@@ -991,12 +989,8 @@ class Tracker():
         d_light = torch.zeros(params['light'].shape)
         d_light = nn.Parameter(d_light.float().to(self.device))
 
-        # prepare texture map residual (to be optimized)
-        if 'd_texture' in in_dict.keys():
-            #d_texture = torch.from_numpy(prev_ret_dict['d_texture']).to(self.device).detach()
-            d_texture = torch.from_numpy(in_dict['d_texture'])
-        else:
-            d_texture = torch.zeros([batch_size, 3, 256, 256])
+        # prepare texture map residual offsets (to be optimized)
+        d_texture = torch.zeros([batch_size, 3, 256, 256])
         d_texture = nn.Parameter(d_texture.float().to(self.device))
 
         if continue_fit == False:
@@ -1004,16 +998,18 @@ class Tracker():
                 {'params': [d_exp], 'lr': 0.005}, 
                 {'params': [d_jaw], 'lr': 0.005},
                 {'params': [eye_pose], 'lr': 0.005},
-                {'params': [d_camera_translation], 'lr': 0.005}, 
-                {'params': [d_camera_rotation], 'lr': 0.005},
+                {'params': [d_light], 'lr': 0.005},
+                {'params': [d_camera_translation], 'lr': 0.001}, 
+                {'params': [d_camera_rotation], 'lr': 0.001},
             ]
         else:
             finetune_params = [
                 {'params': [d_exp], 'lr': 0.005}, 
                 {'params': [d_jaw], 'lr': 0.005},
                 {'params': [eye_pose], 'lr': 0.005},
-                {'params': [d_camera_translation], 'lr': 0.05}, 
-                {'params': [d_camera_rotation], 'lr': 0.05},
+                {'params': [d_light], 'lr': 0.005},
+                {'params': [d_camera_translation], 'lr': 0.001}, 
+                {'params': [d_camera_rotation], 'lr': 0.001},
             ]
         if shape_code is None and not continue_fit:
             finetune_params.append({'params': [d_shape], 'lr': 0.005})
@@ -1021,15 +1017,12 @@ class Tracker():
             finetune_params.append({'params': [d_head], 'lr': 0.001})
         if self.USE_NECK_POSE:
             finetune_params.append({'params': [d_neck], 'lr': 0.01})
-        if 'd_texture' not in in_dict.keys():
+
+        if 'texture' not in in_dict.keys():
             # learn the texture map residual first time
             finetune_params.append({'params': [d_texture], 'lr': 0.005})
             finetune_params.append({'params': [d_tex], 'lr': 0.005})
-            finetune_params.append({'params': [d_light], 'lr': 0.005})
-            update_texture = True
-        else:
-            update_texture = False
-
+            
         # fine optimizer
         e_opt_fine = torch.optim.Adam(
             finetune_params,
@@ -1037,18 +1030,17 @@ class Tracker():
         )
 
         # initialize the texture map
-        with torch.no_grad():
-            texture = torch.clamp(self.flametex(tex + d_tex) + d_texture, 0.0, 1.0)  # [N, 3, 256, 256]
+        if 'texture' in in_dict.keys():
+            texture = torch.from_numpy(in_dict['texture']).to(self.device).detach()            # [N, 3, 256, 256]
+            update_texture = False
+        else:
+            texture = torch.clamp(self.flametex(tex + d_tex) + d_texture, 0.0, 1.0).detach()   # [N, 3, 256, 256]
+            update_texture = True
 
         # optimization loop
-        if continue_fit:
-            # continue to fit on the next video frame
-            total_iterations = 300
-        else:
-            # initial fitting, take longer time
-            total_iterations = 800
-        for iter in range(total_iterations):
-            e_opt_fine.zero_grad()
+        max_iterations = 1000
+        early_stopper = EarlyStopping(window_size=10, slope_threshold=-1e-5, flat_patience=3, verbose=False)
+        for iter in range(max_iterations):
 
             optimized_shape = shape + d_shape
             optimized_exp = exp + d_exp
@@ -1062,7 +1054,7 @@ class Tracker():
                                         neck_pose_params=optimized_neck_pose,
                                         eye_pose_params=eye_pose) # [1, V, 3]
             
-            if update_texture and iter > 100:
+            if update_texture and iter > 10:
                 texture = torch.clamp(self.flametex(tex + d_tex) + d_texture, 0.0, 1.0)  # [N, 3, 256, 256]
 
             # project the vertices to 2D
@@ -1117,6 +1109,17 @@ class Tracker():
             loss_reg_exp = (torch.sum((exp + d_exp) ** 2) / 2) * 1e-4 # 1e-3
             loss_reg = loss_reg_shape + loss_reg_exp # + loss_reg_tex
             loss = loss_photo + loss_facial + loss_jawline + loss_eyes_contour + loss_eyes + loss_ear + loss_reg
+            
+            # early stopping
+            current_loss = loss.item()
+            early_stopper(current_loss)
+            if early_stopper.early_stop:
+                # print("Stage 2 early stopping triggered at iter: ", iter)
+                e_opt_fine.zero_grad()
+                break
+
+            # optimization step
+            e_opt_fine.zero_grad()
             loss.backward()
             e_opt_fine.step()
 
@@ -1136,8 +1139,8 @@ class Tracker():
                                         neck_pose_params=optimized_neck_pose,
                                         eye_pose_params=eye_pose) # [1, V, 3]
             
-            # flame texture model
-            texture = torch.clamp(self.flametex(tex + d_tex) + d_texture, 0.0, 1.0) # [N, 3, 256, 256]
+            if update_texture:
+                texture = torch.clamp(self.flametex(tex + d_tex) + d_texture, 0.0, 1.0) # [N, 3, 256, 256]
             
             # project the vertices to 2D
             verts_clip = batch_perspective_projection(verts=vertices, camera_pose=optimized_camera_pose, 
@@ -1178,7 +1181,6 @@ class Tracker():
             'neck_pose': optimized_neck_pose.detach().cpu().numpy(),  # [1,3]
             'eye_pose': eye_pose.detach().cpu().numpy(),              # [1,6]
             'tex': (tex + d_tex).detach().cpu().numpy(),              # [1,50]
-            'd_texture': d_texture.detach().cpu().numpy(),            # [1,3,256,256]
             'texture': texture.detach().cpu().numpy(),                # [1,3,256,256]
             'light': (light + d_light).detach().cpu().numpy(),        # [1,9,3]
             'cam': optimized_camera_pose.detach().cpu().numpy(),      # [1,6]
