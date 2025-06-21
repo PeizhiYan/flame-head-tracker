@@ -88,21 +88,11 @@ Please follow the example in: [Example_2_video_tracking.ipynb](./Example_2_video
 <div align="left"> 
   <b>More Examples</b>
   <br>
-  <span>Landmark-based Fitting</span>
-  <br>
-  <span><img src="./assets/output_MVI_1797-landmarks.gif" alt="drawing" width="500"/></span>
+  <!-- <span><img src="./assets/output_MVI_1797-landmarks.gif" alt="drawing" width="500"/></span>
   <br>
   <span><img src="./assets/output_MVI_1811-landmarks.gif" alt="drawing" width="500"/></span>
-  <br>
-  <span><img src="./assets/output_bala-landmarks.gif" alt="drawing" width="500"/></span>
-  <br>
-  <!-- <span>Photometric Fitting</span>
-  <br>
-  <span><img src="./assets/output_MVI_1797-landmarks.gif" alt="drawing" width="500"/></span>
-  <br>
-  <span><img src="./assets/output_MVI_1811-landmarks.gif" alt="drawing" width="500"/></span>
-  <br>
-  <span><img src="./assets/output_bala-landmarks.gif" alt="drawing" width="500"/></span> -->
+  <br> -->
+  <span><img src="./assets/output_bala.gif" alt="drawing" width="700"/></span>
   <br>
 </div>
 
