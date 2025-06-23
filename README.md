@@ -51,16 +51,16 @@ The result ```ret_dict``` contains the following data:
 
 - **shape** `(1, 300)`  The FLAME shape code.  
 - **exp** `(1, 100)`    The FLAME expression code.  
-- **head_pose** `(1, 3)`  The FLAME head pose.  
+- **head_pose** `(1, 3)`  The FLAME head pose.  Not used (zeros).
 - **jaw_pose** `(1, 3)`    The FLAME jaw pose.
-- **neck_pose** `(1, 3)`    The FLAME neck pose.
+- **neck_pose** `(1, 3)`    The FLAME neck pose.   Not used (zeros).
 - **eye_pose** `(1, 6)`    The FLAME eyeball poses.  
 - **tex** `(1, 50)`    The FLAME parametric texture code.  
 - **light** `(1, 9, 3)`    The estimated SH lighting coefficients.  
 - **cam** `(1, 6)`    The estimated 6DoF camera pose (yaw, pitch, roll, x, y, z).  
 - **img_rendered** `(1, 256, 256, 3)`    Rendered shape on top of the original image (for visualization purposes only).  
 - **mesh_rendered** `(1, 256, 256, 3)`    Rendered mesh shape with landmarks (for visualization purposes only).  
-- **img** `(1, 512, 512, 3)`    The image on which the FLAME model was fit.  
+- **img** `(1, 512, 512, 3)`    The image on which the FLAME model was fit. (If ```realign==True``` ```img``` is identical to ```img_aligned```)  
 - **img_aligned** `(1, 512, 512, 3)`    The aligned image.  
 - **parsing** `(1, 512, 512)`    The face semantic parsing result of `img`.  
 - **parsing_aligned** `(1, 512, 512)`    The face semantic parsing result of `img_aligned`.  
@@ -78,9 +78,9 @@ Please follow the example in: [Example_2_video_tracking.ipynb](./Example_2_video
 
 
 > [!NOTE]
-> The results will be saved to the ```save_path```. The reconstruction result of each frame will be saved to the corresponding ```[frame_id].npz``` file.
->
-> If photometric fitting mode is True, it will also save the texture map as a ```texture.png``` file.
+> - The results will be saved to the ```save_path```. The reconstruction result of each frame will be saved to the corresponding ```[frame_id].npz``` file.
+> - Although each ```.npz``` file contains the shape coefficients and texture coefficients, they are actually same (canonical shape and texture). The expression coefficients, jaw pose, eye pose, light, and camera pose were optimized on each frame.
+> - If ```photometric_fitting``` is ```True```, it will also save the canonical texture map as a ```texture.png``` file.
 
 
 
@@ -88,15 +88,15 @@ Please follow the example in: [Example_2_video_tracking.ipynb](./Example_2_video
 <div align="left"> 
   <b>More Examples</b> (input videos were from <a href="https://github.com/zhengyuf/IMavatar">IMAvatar</a>, <a href="https://github.com/gafniguy/4D-Facial-Avatars">NeRFace</a>, <a href="https://philgras.github.io/neural_head_avatars/neural_head_avatars.html">NHA</a>)
   <br>
-  <span><img src="./assets/demo_gifs/output_MVI_1797.gif" alt="drawing" width="600"/></span>
+  <span><img src="./assets/demo_gifs/output_MVI_1797.gif" alt="drawing" width="500"/></span>
   <br>
-  <span><img src="./assets/demo_gifs/output_MVI_1811.gif" alt="drawing" width="600"/></span>
+  <span><img src="./assets/demo_gifs/output_MVI_1811.gif" alt="drawing" width="500"/></span>
   <br>
-  <span><img src="./assets/demo_gifs/output_bala.gif" alt="drawing" width="600"/></span>
+  <span><img src="./assets/demo_gifs/output_bala.gif" alt="drawing" width="500"/></span>
   <br>
-  <span><img src="./assets/demo_gifs/output_person_0004.gif" alt="drawing" width="600"/></span>
+  <span><img src="./assets/demo_gifs/output_person_0004.gif" alt="drawing" width="500"/></span>
   <br>
-  <span><img src="./assets/demo_gifs/output_wojtek_1.gif" alt="drawing" width="600"/></span>
+  <span><img src="./assets/demo_gifs/output_wojtek_1.gif" alt="drawing" width="500"/></span>
   <br>
 </div>
 
