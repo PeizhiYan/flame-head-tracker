@@ -95,7 +95,7 @@ Please follow the example in: [Example_2_video_tracking.ipynb](./Example_2_video
   <span><img src="./assets/demo_gifs/output_bala.gif" alt="drawing" width="600"/></span>
   <br>
   <span><img src="./assets/demo_gifs/output_person_0004.gif" alt="drawing" width="600"/></span>
-  <b r>
+  <br>
   <span><img src="./assets/demo_gifs/output_wojtek_1.gif" alt="drawing" width="600"/></span>
   <br>
 </div>
