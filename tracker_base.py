@@ -650,9 +650,6 @@ class Tracker():
                 loss_r_ear = fitting_util.l2_distance(right_ear_landmarks2d, gt_ear_landmarks)
                 if loss_l_ear < EAR_LOSS_THRESHOLD: loss_ear = loss_ear + loss_l_ear
                 if loss_r_ear < EAR_LOSS_THRESHOLD: loss_ear = loss_ear + loss_r_ear
-                yaw_angle = camera_pose[0, 0].item()
-                ear_loss_discount = max(0.1, min(0.3, abs(yaw_angle))) / 0.3
-                loss_ear = loss_ear * ear_loss_discount
             loss_ear = loss_ear * 100
 
             loss = loss_facial + loss_jawline + loss_ear
@@ -820,8 +817,8 @@ class Tracker():
                 # use pre-estimated global shape code
                 params[key] = shape_code
             else:
-                if continue_fit and key in ['head_pose', 'light']:
-                    params[key] = prev_ret_dict[key]  # use previous frame's light
+                if continue_fit and key in ['head_pose']:
+                    params[key] = prev_ret_dict[key]
                 else:
                     params[key] = in_dict[key]
 
@@ -888,7 +885,7 @@ class Tracker():
         
         # optimization loop
         max_iterations = 1500
-        early_stopper = EarlyStopping(window_size=10, slope_threshold=-0.5e-5, flat_patience=3, verbose=False)
+        early_stopper = EarlyStopping(window_size=15, slope_threshold=-1e-6, flat_patience=3, verbose=False)
         for iter in range(max_iterations):
 
             # project the vertices to 2D
@@ -900,35 +897,49 @@ class Tracker():
 
             # face 68 landmarks loss
             landmarks2d = concat_verts_ndc_2d[:,:68,:] # [N, 68, 3] normalized to -1.0 ~ 1.0
-            loss_facial = fitting_util.l2_distance(landmarks2d[:, 17:, :2], gt_landmarks[:, 17:, :2])  # face 51 landmarks
-            loss_jawline = fitting_util.l2_distance(landmarks2d[:, :17, :2], gt_landmarks[:, :17, :2]) # jawline loss
+            loss_facial = fitting_util.l2_distance(landmarks2d[:, 17:, :2], gt_landmarks[:, 17:, :2]) * 1.0  # face 51 landmarks
+            loss_jawline = fitting_util.l2_distance(landmarks2d[:, :17, :2], gt_landmarks[:, :17, :2]) * 0.5 # jawline loss
             # loss_eyes_contour = fitting_util.l2_distance(landmarks2d[:, 36:47, :2], gt_landmarks[:, 36:47, :2])  # eyes contour landmarks
 
-            # ear landmarks loss
-            EAR_LOSS_THRESHOLD = 0.2 # sometimes the detected ear landmarks are not accurate
+            # # ear landmarks loss (experimental version)
+            # loss_ear = 0
+            # if self.use_ear_landmarks:
+            #     left_ear_landmarks2d = concat_verts_ndc_2d[:,68:88,:2]    # [N, 20, 2]
+            #     right_ear_landmarks2d = concat_verts_ndc_2d[:,88:108,:2]  # [N, 20, 2]
+            #     yaw_angle = optimized_camera_pose[0, 0].item()
+            #     loss_ear = compute_ear_landmarks_loss(left_ear_landmarks2d, right_ear_landmarks2d, gt_ear_landmarks, yaw_angle)
+            # loss_ear = loss_ear * 0.2
+
+            # ear landmarks loss (as in v3.3)
+            EAR_LOSS_THRESHOLD = 0.25 # sometimes the detected ear landmarks are not accurate
             loss_ear = 0
             if self.use_ear_landmarks:
                 left_ear_landmarks2d = concat_verts_ndc_2d[:,68:88,:2]    # [N, 20, 2]
                 right_ear_landmarks2d = concat_verts_ndc_2d[:,88:108,:2]  # [N, 20, 2]
                 loss_l_ear = fitting_util.l2_distance(left_ear_landmarks2d, gt_ear_landmarks)
                 loss_r_ear = fitting_util.l2_distance(right_ear_landmarks2d, gt_ear_landmarks)
-                if loss_l_ear < EAR_LOSS_THRESHOLD: loss_ear = loss_ear + loss_l_ear
-                if loss_r_ear < EAR_LOSS_THRESHOLD: loss_ear = loss_ear + loss_r_ear
-                yaw_angle = camera_pose[0, 0].item()
-                ear_loss_discount = max(0.1, min(0.3, abs(yaw_angle))) / 0.3
-                loss_ear = loss_ear * ear_loss_discount
-            loss_ear = loss_ear * 0.25
+                if loss_l_ear > EAR_LOSS_THRESHOLD: loss_l_ear *= 0
+                if loss_r_ear > EAR_LOSS_THRESHOLD: loss_r_ear *= 0
+                yaw_angle = optimized_camera_pose[0, 0].item()
+                if yaw_angle < -0.1: # assume only left ear is visible
+                    loss_ear = loss_l_ear
+                elif yaw_angle > -0.1: # assume only right ear is visible
+                    loss_ear = loss_r_ear
+                else: # assume both ears are visible
+                    loss_ear = loss_l_ear + loss_r_ear
+            loss_ear = loss_ear * 0.2
 
             # loss computation
             loss = loss_facial + loss_jawline + loss_ear
 
             # early stopping
-            current_loss = loss.item()
-            early_stopper(current_loss)
-            if early_stopper.early_stop:
-                # print("Stage 1 early stopping triggered at iter: ", iter)
-                e_opt_rigid.zero_grad()
-                break
+            if continue_fit:
+                current_loss = loss.item()
+                early_stopper(current_loss)
+                if early_stopper.early_stop:
+                    # print("Stage 1 early stopping triggered at iter: ", iter)
+                    e_opt_rigid.zero_grad()
+                    break
 
             # optimization step
             e_opt_rigid.zero_grad()
@@ -975,8 +986,9 @@ class Tracker():
             {'params': [d_exp], 'lr': 0.005}, 
             {'params': [d_jaw], 'lr': 0.005},
             {'params': [eye_pose], 'lr': 0.005},
-            {'params': [d_camera_translation], 'lr': 0.001}, 
-            {'params': [d_camera_rotation], 'lr': 0.001},
+            {'params': [d_camera_translation], 'lr': 0.0001}, 
+            {'params': [d_camera_rotation], 'lr': 0.0001},
+            {'params': [d_light], 'lr': 0.005},
         ]
         if shape_code is None and not continue_fit:
             finetune_params.append({'params': [d_shape], 'lr': 0.005})
@@ -985,7 +997,6 @@ class Tracker():
             # learn the texture map residual first time
             finetune_params.append({'params': [d_texture], 'lr': 0.005})
             finetune_params.append({'params': [d_tex], 'lr': 0.005})
-            finetune_params.append({'params': [d_light], 'lr': 0.005})
 
         # fine optimizer
         e_opt_fine = torch.optim.Adam(
@@ -1003,7 +1014,7 @@ class Tracker():
 
         # optimization loop
         max_iterations = 1000
-        early_stopper = EarlyStopping(window_size=10, slope_threshold=-0.5e-5, flat_patience=3, verbose=False)
+        early_stopper = EarlyStopping(window_size=10, slope_threshold=-1e-5, flat_patience=2, verbose=False)
         for iter in range(max_iterations):
 
             optimized_shape = shape + d_shape
@@ -1044,9 +1055,9 @@ class Tracker():
             photo_loss_mask = gt_face_mask
 
             # face 68 landmarks loss
-            loss_facial = fitting_util.l2_distance(landmarks2d[:, 17:, :2], gt_landmarks[:, 17:, :2])      # face 51 landmarks
-            loss_jawline = fitting_util.l2_distance(landmarks2d[:, :17, :2], gt_landmarks[:, :17, :2])     # jawline loss
-            loss_eyes_contour = fitting_util.l2_distance(landmarks2d[:, 36:47, :2], gt_landmarks[:, 36:47, :2])  # eyes contour landmarks
+            loss_facial = fitting_util.l2_distance(landmarks2d[:, 17:, :2], gt_landmarks[:, 17:, :2]) * 1.0     # face 51 landmarks
+            loss_jawline = fitting_util.l2_distance(landmarks2d[:, :17, :2], gt_landmarks[:, :17, :2]) * 0.5    # jawline loss
+            # loss_eyes_contour = fitting_util.l2_distance(landmarks2d[:, 36:47, :2], gt_landmarks[:, 36:47, :2])  # eyes contour landmarks
 
             # ear landmarks loss
             EAR_LOSS_THRESHOLD = 0.2 # sometimes the detected ear landmarks are not accurate
@@ -1054,28 +1065,39 @@ class Tracker():
             if self.use_ear_landmarks:
                 loss_l_ear = fitting_util.l2_distance(left_ear_landmarks2d, gt_ear_landmarks)
                 loss_r_ear = fitting_util.l2_distance(right_ear_landmarks2d, gt_ear_landmarks)
-                if loss_l_ear < EAR_LOSS_THRESHOLD: loss_ear = loss_ear + loss_l_ear
-                if loss_r_ear < EAR_LOSS_THRESHOLD: loss_ear = loss_ear + loss_r_ear
-                yaw_angle = camera_pose[0, 0].item()
-                ear_loss_discount = max(0.1, min(0.3, abs(yaw_angle))) / 0.3
-                loss_ear = loss_ear * ear_loss_discount
-            loss_ear = loss_ear * 0.25
+                if loss_l_ear > EAR_LOSS_THRESHOLD: loss_l_ear *= 0
+                if loss_r_ear > EAR_LOSS_THRESHOLD: loss_r_ear *= 0
+                yaw_angle = optimized_camera_pose[0, 0].item()
+                if yaw_angle < -0.1: # assume only left ear is visible
+                    loss_ear = loss_l_ear
+                elif yaw_angle > -0.1: # assume only right ear is visible
+                    loss_ear = loss_r_ear
+                else: # assume both ears are visible
+                    loss_ear = loss_l_ear + loss_r_ear
+            loss_ear = loss_ear * 0.2
+
+            # # ear landmarks loss
+            # loss_ear = 0
+            # if self.use_ear_landmarks:
+            #     yaw_angle = optimized_camera_pose[0, 0].item()
+            #     loss_ear = compute_ear_landmarks_loss(left_ear_landmarks2d, right_ear_landmarks2d, gt_ear_landmarks, yaw_angle)
+            # loss_ear = loss_ear * 0.2
 
             # loss computation and optimization
-            loss_photo = compute_batch_pixelwise_l1_loss(gt_img, rendered_textured, photo_loss_mask) * 3  # photometric loss
-            loss_eyes = fitting_util.l2_distance(eyes_landmarks2d, gt_eye_landmarks) * 3
-            loss_reg_shape = (torch.sum(d_shape ** 2) / 2) * 1e-4 # 1e-4
-            loss_reg_exp = (torch.sum(optimized_exp ** 2) / 2) * 1e-3 # 1e-3
+            loss_photo = compute_batch_pixelwise_l1_loss(gt_img, rendered_textured, photo_loss_mask) * 5     # photometric loss
+            loss_eyes = fitting_util.l2_distance(eyes_landmarks2d, gt_eye_landmarks) * 2
+            loss_reg_shape = (torch.sum(d_shape ** 2) / 2) * 0.5e-3 # 1e-4
+            loss_reg_exp = (torch.sum(optimized_exp ** 2) / 2) * 1e-4 # 1e-3
             if continue_fit:
                 prev_exp = torch.tensor(prev_ret_dict['exp'], dtype=torch.float32).detach().to(self.device)
-                loss_reg_exp_smooth = (torch.sum((prev_exp - optimized_exp) ** 2) / 2) * 1e-3
+                loss_reg_exp_smooth = (torch.sum((prev_exp - optimized_exp) ** 2) / 2) * 1e-4
             else:
                 loss_reg_exp_smooth = 0
-            loss_reg = loss_reg_shape + loss_reg_exp + loss_reg_exp_smooth # + loss_reg_tex
-            loss = loss_photo + loss_facial + loss_jawline + loss_eyes_contour + loss_eyes + loss_ear + loss_reg
+            loss_reg = loss_reg_shape + loss_reg_exp + loss_reg_exp_smooth 
+            loss = loss_photo + loss_facial + loss_jawline + loss_eyes + loss_ear + loss_reg
 
             # early stopping
-            if not update_texture:
+            if continue_fit:
                 current_loss = loss.item()
                 early_stopper(current_loss)
                 if early_stopper.early_stop:

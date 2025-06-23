@@ -42,7 +42,7 @@ def track_video(tracker_cfg):
     ## Setup Flame Tracker    #     
     ###########################
     tracker = Tracker(tracker_cfg)
-    tracker.set_landmark_detector('hybrid')
+    tracker.set_landmark_detector('mediapipe')
 
     ###############################
     ## Estimate Canonical Shape   #     

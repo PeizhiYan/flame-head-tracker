@@ -32,6 +32,58 @@ def compute_batch_pixelwise_l1_loss(gt_imgs, pred_imgs, gt_face_masks):
     return l1_loss.mean()
 
 
+def compute_ear_landmarks_loss(left_ear_landmarks2d, right_ear_landmarks2d, gt_ear_landmarks, yaw_angle):
+    """
+    Computes selective ear landmark loss based on a distance threshold.
+
+    Args:
+        left_ear_landmarks2d (torch.Tensor): [1, 20, 2]
+        right_ear_landmarks2d (torch.Tensor): [1, 20, 2]
+        gt_ear_landmarks (torch.Tensor): [1, 20, 2]
+        yaw_angle (float): camera's yaw angle
+
+    Returns:
+        torch.Tensor: scalar loss
+    """
+    THRESHOLD = 0.3
+
+    # Per-landmark L2 distances
+    dist_l = torch.norm(left_ear_landmarks2d - gt_ear_landmarks, dim=2)  # [1, 20]
+    dist_r = torch.norm(right_ear_landmarks2d - gt_ear_landmarks, dim=2) # [1, 20]
+
+    # Mask: keep only distances <= THRESHOLD
+    mask_l = dist_l <= THRESHOLD
+    mask_r = dist_r <= THRESHOLD
+
+    # Apply mask
+    valid_l = dist_l * mask_l
+    valid_r = dist_r * mask_r
+
+    # Avoid division by zero
+    if mask_l.sum() > 0:
+        valid_l_mean = valid_l.sum() / (mask_l.sum() + 1e-6)
+    else:
+        valid_l_mean = valid_l.sum()
+    if mask_r.sum() > 0:
+        valid_r_mean = valid_r.sum() / (mask_r.sum() + 1e-6)
+    else:
+        valid_r_mean = valid_r.sum()
+
+    # Final loss
+    if yaw_angle < -0.1:
+        # assume only left ear is visible
+        loss = valid_l_mean
+    elif yaw_angle > -0.1:
+        # assume only right ear is visible
+        loss = valid_r_mean
+    else:
+        # assume both ears are visible
+        loss = valid_l_mean + valid_r_mean
+
+    print(valid_l_mean.item(), valid_r_mean.item(), yaw_angle, loss.item())
+    return loss
+
+
 class EarlyStopping:
     def __init__(self, window_size=10, slope_threshold=-1e-4, flat_patience=3, verbose=False):
         """
