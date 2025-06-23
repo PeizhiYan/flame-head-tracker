@@ -145,7 +145,7 @@ def image_align(img, face_landmarks, output_size=256, transform_size=1024,
     #    - img: [S,S,3] aligned image     numpy.array    uint8
 
     if standard == 'tracking':
-        scale_factor = 1.2
+        scale_factor = 1.3
     else:
         scale_factor = 1.0 # FFHQ
         
@@ -170,12 +170,15 @@ def image_align(img, face_landmarks, output_size=256, transform_size=1024,
     mouth_avg    = (mouth_left + mouth_right) * 0.5
     eye_to_mouth = mouth_avg - eye_avg
 
+    chin_avg = (lm_chin[0] + lm_chin[-1]) * 0.5
+
     # Choose oriented crop rectangle.
     x = eye_to_eye - np.flipud(eye_to_mouth) * [-1, 1]
     x /= np.hypot(*x)
     x *= max(np.hypot(*eye_to_eye) * 2.0, np.hypot(*eye_to_mouth) * 1.8) * scale_factor
     y = np.flipud(x) * [-1, 1]
-    c = eye_avg + eye_to_mouth * 0.1
+    # c = eye_avg + eye_to_mouth * 0.1
+    c = (eye_avg + chin_avg) * 0.5 + eye_to_mouth * 0.1
     quad = np.stack([c - x - y, c - x + y, c + x + y, c + x - y])
     qsize = np.hypot(*x) * 2
 

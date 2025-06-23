@@ -9,14 +9,14 @@
 </div>
 
 <div align="center"> 
-  <b><img src="./assets/demo.gif" alt="drawing" width="600"/></b>
+  <b><img src="./assets/demo_gifs/output_IMG_2647.gif" alt="drawing" width="660"/></b>
   <br>
 </div>
 
 > [!NOTE]
 > This project depends on other third-party libraries or code, which may be licensed under different terms. When using this project, you are required to comply with the license terms of any dependencies in addition to the MIT License. Please review the licenses of all dependencies before use or distribution.
 
-**Current Version**: v3.4 beta (June 18, 2025)
+**Current Version**: v3.4 (June 23, 2025)
 
 **Previous Versions**:
 - v3.3 Stable (https://github.com/PeizhiYan/flame-head-tracker/tree/v3.3)
@@ -86,13 +86,21 @@ Please follow the example in: [Example_2_video_tracking.ipynb](./Example_2_video
 
 
 <div align="left"> 
-  <b>More Examples</b>
+  <b>More Examples</b> (input videos were from <a href="https://github.com/zhengyuf/IMavatar">IMAvatar</a>, <a href="https://github.com/gafniguy/4D-Facial-Avatars">NeRFace</a>, <a href="https://philgras.github.io/neural_head_avatars/neural_head_avatars.html">NHA</a>)
   <br>
   <!-- <span><img src="./assets/output_MVI_1797-landmarks.gif" alt="drawing" width="500"/></span>
   <br>
   <span><img src="./assets/output_MVI_1811-landmarks.gif" alt="drawing" width="500"/></span>
   <br> -->
-  <span><img src="./assets/output_bala.gif" alt="drawing" width="700"/></span>
+  <span><img src="./assets/demo_gifs/output_bala.gif" alt="drawing" width="600"/></span>
+  <br>
+  <span><img src="./assets/demo_gifs/output_MVI_1797.gif" alt="drawing" width="600"/></span>
+  <br>
+  <span><img src="./assets/demo_gifs/output_MVI_1811.gif" alt="drawing" width="600"/></span>
+  <br>
+  <span><img src="./assets/demo_gifs/output_person_0004.gif" alt="drawing" width="600"/></span>
+  <b r>
+  <span><img src="./assets/demo_gifs/output_wojtek_1.gif" alt="drawing" width="600"/></span>
   <br>
 </div>
 
