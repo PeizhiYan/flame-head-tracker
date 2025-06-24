@@ -13,10 +13,10 @@ import torch
 import random
 import copy
 
-from utils.video_utils import video_to_images
 from tracker_base import Tracker
 
-
+from utils.video_utils import video_to_images
+from utils.matting_utils import matting_video_frames
 
 
 def track_video(tracker_cfg):
@@ -44,6 +44,14 @@ def track_video(tracker_cfg):
     tracker = Tracker(tracker_cfg)
     tracker.set_landmark_detector('mediapipe')
 
+    #########################
+    ## Run Video Matting    #
+    #########################
+    if tracker.use_matting:
+        print('>>> Running video matting...')
+        # run video matting on all frames
+        frames = matting_video_frames(tracker.video_matting_model, frames)
+ 
     ###############################
     ## Estimate Canonical Shape   #     
     ###############################

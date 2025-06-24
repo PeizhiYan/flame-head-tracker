@@ -16,7 +16,7 @@
 > [!NOTE]
 > This project depends on other third-party libraries or code, which may be licensed under different terms. When using this project, you are required to comply with the license terms of any dependencies in addition to the MIT License. Please review the licenses of all dependencies before use or distribution.
 
-**Current Version**: v3.4 (June 23, 2025)
+**Current Version**: v3.4.1 (June 24, 2025)
 
 **Previous Versions**:
 - v3.3 Stable (https://github.com/PeizhiYan/flame-head-tracker/tree/v3.3)
@@ -258,6 +258,7 @@ Our code is mainly based on the following repositories:
 - i-Bug Ears (ear landmarks dataset): https://ibug.doc.ic.ac.uk/resources/ibug-ears/
 - Ear Landmark Detection: https://github.com/Dryjelly/Face_Ear_Landmark_Detection
 - ArcFace (from InsightFace): https://github.com/deepinsight/insightface
+- RobustVideoMatting: https://github.com/PeterL1n/RobustVideoMatting
 
 We want to acknowledge the contributions of the authors of these repositories. We do not claim ownership of any code originating from these repositories, and any modifications we have made are solely for our specific use case. All original rights and attributions remain with the respective authors.
 

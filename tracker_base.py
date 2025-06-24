@@ -47,6 +47,7 @@ from utils.image_utils import read_img, min_max, uint8_img, norm_img, image_alig
                               display_landmarks_with_cv2, get_face_mask, get_foreground_mask
 from utils.graphics_utils import fov_to_focal, build_intrinsics, batch_perspective_projection, \
                                  batch_verts_clip_to_ndc, batch_verts_ndc_to_screen
+from utils.matting_utils import load_matting_model, matting_single_image
 
 
 class Tracker():
@@ -117,6 +118,13 @@ class Tracker():
 
         # Face parsing model
         self.face_parser = FaceParsing(model_path=tracker_cfg['face_parsing_model_path'])
+
+        # Matting model
+        if 'use_matting' in tracker_cfg:
+            self.use_matting = tracker_cfg['use_matting']
+            self.video_matting_model = load_matting_model(device=self.device)
+        else:
+            self.use_matting = False
 
         # FLAME model and FLAME texture model
         self.flame = FLAME(self.flame_cfg).to(self.device)
@@ -473,6 +481,8 @@ class Tracker():
             -ret_dict: results dictionary
         """
         img = read_img(img_path)
+        if self.use_matting:
+            img = matting_single_image(self.video_matting_model, img)
         return self.run(img, realign, photometric_fitting, prev_ret_dict, shape_code, texture)
 
     
