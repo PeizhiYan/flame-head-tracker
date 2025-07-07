@@ -70,7 +70,6 @@ class FaceParsing():
         # Face Parsing Model
         self.parsing_net = BiSeNet(n_classes=19).cuda().eval()
         self.parsing_net.load_state_dict(torch.load(model_path))
-                
 
     def run(self, img):
         # input image should be standardized to 0 ~ 1
@@ -93,7 +92,32 @@ class FaceParsing():
         torch.cuda.empty_cache() # empty cuda
         
         return parsing
+    
+    @torch.no_grad()
+    def run_batch(self, imgs):
+        # imgs: list of images, each should be standardized to 0~1 (numpy arrays)
+        n_classes = 19
+        to_tensor = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+        ])
+        imgs_tensor = []
+        for img in imgs:
+            img = cv2.resize(img, (512, 512))  # Ensure 512x512
+            img = to_tensor(img)
+            imgs_tensor.append(img)
+        imgs_tensor = torch.stack(imgs_tensor, dim=0).cuda()  # Create a batch and move to GPU
 
+        with torch.no_grad():
+            outs = self.parsing_net(imgs_tensor)[0]
+            # outs: [batch, n_classes, H, W]
+            parsings = outs.argmax(1).cpu().numpy()  # Shape: (batch, H, W)
+        
+        # Release CUDA
+        gc.collect()
+        torch.cuda.empty_cache()
+        
+        return parsings  # (batch_size, 512, 512)
 
     def binary_mask(self, mask, keep=[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18]):
         # input:
