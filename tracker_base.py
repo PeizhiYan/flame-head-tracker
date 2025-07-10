@@ -146,10 +146,14 @@ class Tracker():
         self.DEFAULT_FOV = 20.0  # default x&y-axis FOV in degrees
         self.DEFAULT_DISTANCE = 1.0 # default camera to 3D world coordinate center distance
         self.DEFAULT_FOCAL = fov_to_focal(fov = self.DEFAULT_FOV, sensor_size = self.H)
-        self.update_fov(fov = self.DEFAULT_FOV) # initialize the camera focal length and to object distance
+        self.update_init_fov(fov = self.DEFAULT_FOV) # initialize the camera focal length and to object distance
         self.bg_color = (1.0,1.0,1.0) # White
         self.znear = 0.01
         self.zfar  = 100.0
+        if 'optimize_fov' in tracker_cfg:
+            self.optimize_fov = tracker_cfg['optimize_fov']
+        else:
+            self.optimize_fov = False
 
         # FLAME render (from DECA)
         self.flame_texture_render = Renderer(self.flame_cfg.cropped_size, 
@@ -187,18 +191,17 @@ class Tracker():
         self.landmark_detector = landmark_detector
     
 
-    def update_fov(self, fov : float):
+    def update_init_fov(self, fov : float):
         """
-        Update the camera FOV and adjust the camera to object distance
-        correspondingly
+        Update the initial camera FOV and adjust the camera to object distance correspondingly
         """
         # Assert that the FOV is within the reasonable range
         assert 10 <= fov <= 60, f"FOV must be between 10 and 60. Provided: {fov}"
         self.fov = fov # update the fov
         self.focal = fov_to_focal(fov = fov, sensor_size = self.H) # compute new focal length
         self.distance = self.DEFAULT_DISTANCE * (self.focal / self.DEFAULT_FOCAL) # compute new camera to object distance
-        # Initialize the camera intrinsic matrix
-        self.K = build_intrinsics(batch_size=1, image_size=self.H, focal_length=self.focal, device=self.device) # K is [1, 3, 3]
+        # # Initialize the camera intrinsic matrix
+        # self.K = build_intrinsics(batch_size=1, image_size=self.H, focal_length=self.focal, device=self.device) # K is [1, 3, 3]
 
 
     def mediapipe_face_detection(self, img):
@@ -588,22 +591,28 @@ class Tracker():
             right_ear_vertices = vertices[:, self.R_EAR_INDICES, :] # [N, 20, 3]
             concat_vertices = torch.cat([face_68_vertices, left_ear_vertices, right_ear_vertices], dim=1) # [N, 108, 3]
 
-        # prepare 6DoF camera pose tensor
+        # prepare 6DoF camera pose tensor and FOV tensor
         if continue_fit == False:
-            camera_pose = np.zeros([batch_size, 6], dtype=np.float32) # [yaw, pitch, roll, x, y, z]
+            fov = np.full((batch_size,), self.fov, dtype=np.float32)  # [N]
+            fov = torch.tensor(fov, dtype=torch.float32).to(self.device).detach()
+            camera_pose = np.zeros([batch_size, 6], dtype=np.float32) # (yaw, pitch, roll, x, y, z)
             camera_pose[:, -1] = self.distance # set the camera to origin distance
             camera_pose = torch.tensor(camera_pose, dtype=torch.float32).to(self.device).detach()
         else:
             # use previous frame's estimation to initialize
+            fov = torch.tensor(prev_ret_dict['fov'], dtype=torch.float32).to(self.device)
             camera_pose = torch.tensor(prev_ret_dict['cam'], dtype=torch.float32).to(self.device)
 
-        # prepare camera pose offsets (to be optimized)
+        # prepare camera pose and fov offsets (to be optimized)
         d_camera_rotation = nn.Parameter(torch.zeros([batch_size, 3], dtype=torch.float32, device=self.device))
         d_camera_translation = nn.Parameter(torch.zeros([batch_size, 3], dtype=torch.float32, device=self.device))
+        d_fov = nn.Parameter(torch.zeros([batch_size], dtype=torch.float32, device=self.device))
         camera_params = [
             {'params': [d_camera_translation], 'lr': 0.01}, 
-            {'params': [d_camera_rotation], 'lr': 0.05}
+            {'params': [d_camera_rotation], 'lr': 0.05},
         ]
+        if self.optimize_fov:
+            camera_params.append({'params': [d_fov], 'lr': 0.1})
 
         # camera pose optimizer
         e_opt_rigid = torch.optim.Adam(
@@ -638,10 +647,15 @@ class Tracker():
                 if iter <= 100: l_f = 100; l_c = 500 # more weights to contour
                 else: l_f = 500; l_c = 100 # more weights to face
 
+            # compute camera intrinsics
+            optimized_fov = torch.clamp(fov + d_fov, min=10.0, max=50.0)                    # [N]
+            optimized_focal_length = fov_to_focal(fov=optimized_fov, sensor_size=self.H)    # [N]
+            Ks = build_intrinsics(focal_length=optimized_focal_length, image_size=self.H)   # [N,3,3]
+
             # project the vertices to 2D
             optimized_camera_pose = camera_pose + torch.cat([d_camera_rotation, d_camera_translation], dim=-1) # [N, 6]
             concat_verts_clip = batch_perspective_projection(verts=concat_vertices, camera_pose=optimized_camera_pose, 
-                                                             K=self.K, image_size=self.H, near=self.znear, far=self.zfar) # [N, 108, 3]
+                                                             K=Ks, image_size=self.H, near=self.znear, far=self.zfar) # [N, 108, 3]
             concat_verts_ndc_3d = batch_verts_clip_to_ndc(concat_verts_clip) # output [N, 108, 3] normalized to -1.0 ~ 1.0
             concat_verts_ndc_2d = concat_verts_ndc_3d[:,:,:2]
 
@@ -667,9 +681,12 @@ class Tracker():
             loss.backward()
             e_opt_rigid.step()
 
-        # the optimized camera pose from the Stage 1
+        # the optimized camera pose and intrinsics from the Stage 1
         optimized_camera_pose = camera_pose + torch.cat([d_camera_rotation, d_camera_translation], dim=-1)        
         optimized_camera_pose = optimized_camera_pose.detach() # [1, 6]
+        optimized_fov = torch.clamp(fov + d_fov, min=10.0, max=50.0)                            # [N]
+        optimized_focal_length = fov_to_focal(fov=optimized_fov, sensor_size=self.H)            # [N]
+        Ks = build_intrinsics(focal_length=optimized_focal_length, image_size=self.H).detach()  # [N,3,3]
 
         if self.use_kalman_filter == True:
             # apply Kalman filter on camera pose
@@ -735,7 +752,7 @@ class Tracker():
 
             # project the vertices to 2D
             verts_clip = batch_perspective_projection(verts=vertices, camera_pose=optimized_camera_pose, 
-                                                      K=self.K, image_size=self.H, near=self.znear, far=self.zfar) # [N, V, 3]
+                                                      K=Ks, image_size=self.H, near=self.znear, far=self.zfar) # [N, V, 3]
             verts_ndc_3d = batch_verts_clip_to_ndc(verts_clip) # output [N, V, 3] normalized to -1.0 ~ 1.0
 
             # 68 face landmarks
@@ -769,7 +786,7 @@ class Tracker():
                                         eye_pose_params=eye_pose) # [1, V, 3]
 
             verts_clip = batch_perspective_projection(verts=vertices, camera_pose=optimized_camera_pose, 
-                                        K=self.K, image_size=self.H, near=self.znear, far=self.zfar) # [N, V, 3]
+                                        K=Ks, image_size=self.H, near=self.znear, far=self.zfar) # [N, V, 3]
             verts_ndc_3d = batch_verts_clip_to_ndc(verts_clip)    # convert the clipped vertices to NDC, output [N, V, 3]
             verts_screen_3d = batch_verts_ndc_to_screen(verts_ndc_3d, image_size=self.H)
             landmarks_3d_screen = self.flame.seletec_3d68(verts_screen_3d).detach().cpu().numpy()   # [N, 68, 3]
@@ -801,8 +818,10 @@ class Tracker():
             'tex': params['tex'],                                    # [1,50]
             'light': params['light'],                                # [1,9,3]
             'cam': optimized_camera_pose.detach().cpu().numpy(),     # [1,6]
-            'img_rendered': rendered_mesh_shape_img[None],           # [1, 256, 256, 3]
-            'mesh_rendered': rendered_mesh_shape[None],              # [1, 256, 256, 3]
+            'fov': optimized_fov.detach().cpu().numpy(),             # [1]
+            'K': Ks.detach().cpu().numpy(),                          # [1,3,3]
+            'img_rendered': rendered_mesh_shape_img[None],           # [1,256,256,3]
+            'mesh_rendered': rendered_mesh_shape[None],              # [1,256,256,3]
         }
         
         return ret_dict
@@ -870,22 +889,28 @@ class Tracker():
             right_ear_vertices = vertices[:, self.R_EAR_INDICES, :] # [N, 20, 3]
             concat_vertices = torch.cat([face_68_vertices, left_ear_vertices, right_ear_vertices], dim=1) # [N, 108, 3]
 
-        # prepare 6DoF camera pose tensor
+        # prepare 6DoF camera pose tensor and FOV tensor
         if continue_fit == False:
-            camera_pose = np.zeros([batch_size, 6], dtype=np.float32) # [yaw, pitch, roll, x, y, z]
+            fov = np.full((batch_size,), self.fov, dtype=np.float32)  # [N]
+            fov = torch.tensor(fov, dtype=torch.float32).to(self.device).detach()
+            camera_pose = np.zeros([batch_size, 6], dtype=np.float32) # (yaw, pitch, roll, x, y, z)
             camera_pose[:, -1] = self.distance # set the camera to origin distance
             camera_pose = torch.tensor(camera_pose, dtype=torch.float32).to(self.device).detach()
         else:
             # use previous frame's estimation to initialize
+            fov = torch.tensor(prev_ret_dict['fov'], dtype=torch.float32).to(self.device)
             camera_pose = torch.tensor(prev_ret_dict['cam'], dtype=torch.float32).to(self.device)
 
         # prepare camera pose offsets (to be optimized)
         d_camera_rotation = nn.Parameter(torch.zeros([batch_size, 3], dtype=torch.float32, device=self.device))
         d_camera_translation = nn.Parameter(torch.zeros([batch_size, 3], dtype=torch.float32, device=self.device))
+        d_fov = nn.Parameter(torch.zeros([batch_size], dtype=torch.float32, device=self.device))
         camera_params = [
             {'params': [d_camera_translation], 'lr': 0.005}, 
             {'params': [d_camera_rotation], 'lr': 0.005}, 
         ]
+        if self.optimize_fov:
+            camera_params.append({'params': [d_fov], 'lr': 0.1})
 
         # camera pose optimizer
         e_opt_rigid = torch.optim.Adam(
@@ -898,10 +923,15 @@ class Tracker():
         early_stopper = EarlyStopping(window_size=15, slope_threshold=-1e-6, flat_patience=3, verbose=False)
         for iter in range(max_iterations):
 
+            # compute camera intrinsics
+            optimized_fov = torch.clamp(fov + d_fov, min=10.0, max=50.0)                    # [N]
+            optimized_focal_length = fov_to_focal(fov=optimized_fov, sensor_size=self.H)    # [N]
+            Ks = build_intrinsics(focal_length=optimized_focal_length, image_size=self.H)   # [N,3,3]
+
             # project the vertices to 2D
             optimized_camera_pose = camera_pose + torch.cat([d_camera_rotation, d_camera_translation], dim=-1) # [N, 6]
             concat_verts_clip = batch_perspective_projection(verts=concat_vertices, camera_pose=optimized_camera_pose, 
-                                                             K=self.K, image_size=self.H, near=self.znear, far=self.zfar) # [N, 108, 3]
+                                                             K=Ks, image_size=self.H, near=self.znear, far=self.zfar) # [N, 108, 3]
             concat_verts_ndc_3d = batch_verts_clip_to_ndc(concat_verts_clip) # output [N, 108, 3] normalized to -1.0 ~ 1.0
             concat_verts_ndc_2d = concat_verts_ndc_3d[:,:,:2]
 
@@ -1000,8 +1030,12 @@ class Tracker():
             {'params': [d_camera_rotation], 'lr': 0.0001},
             {'params': [d_light], 'lr': 0.005},
         ]
+
         if shape_code is None and not continue_fit:
             finetune_params.append({'params': [d_shape], 'lr': 0.005})
+        
+        if self.optimize_fov:
+            finetune_params.append({'params': [d_fov], 'lr': 0.01})
 
         if 'texture' not in in_dict.keys():
             # learn the texture map residual first time
@@ -1042,9 +1076,14 @@ class Tracker():
             if update_texture and iter > 100:
                 texture = torch.clamp(self.flametex(tex + d_tex) + d_texture, 0.0, 1.0)  # [N, 3, 256, 256]
 
+            # compute camera intrinsics
+            optimized_fov = torch.clamp(fov + d_fov, min=10.0, max=50.0)                    # [N]
+            optimized_focal_length = fov_to_focal(fov=optimized_fov, sensor_size=self.H)    # [N]
+            Ks = build_intrinsics(focal_length=optimized_focal_length, image_size=self.H)   # [N,3,3]
+
             # project the vertices to 2D
             verts_clip = batch_perspective_projection(verts=vertices, camera_pose=optimized_camera_pose, 
-                                                      K=self.K, image_size=self.H, near=self.znear, far=self.zfar) # [N, V, 3]
+                                                      K=Ks, image_size=self.H, near=self.znear, far=self.zfar) # [N, V, 3]
             verts_ndc_3d = batch_verts_clip_to_ndc(verts_clip) # output [N, V, 3] normalized to -1.0 ~ 1.0
 
             # face landmarks
@@ -1139,9 +1178,14 @@ class Tracker():
             if update_texture:
                 texture = torch.clamp(self.flametex(tex + d_tex) + d_texture, 0.0, 1.0) # [N, 3, 256, 256]
             
+            # compute camera intrinsics
+            optimized_fov = torch.clamp(fov + d_fov, min=10.0, max=50.0)                    # [N]
+            optimized_focal_length = fov_to_focal(fov=optimized_fov, sensor_size=self.H)    # [N]
+            Ks = build_intrinsics(focal_length=optimized_focal_length, image_size=self.H)   # [N,3,3]
+
             # project the vertices to 2D
             verts_clip = batch_perspective_projection(verts=vertices, camera_pose=optimized_camera_pose, 
-                                                      K=self.K, image_size=self.H, near=self.znear, far=self.zfar) # [N, V, 3]
+                                                      K=Ks, image_size=self.H, near=self.znear, far=self.zfar) # [N, V, 3]
             verts_ndc_3d = batch_verts_clip_to_ndc(verts_clip) # output [N, V, 3] normalized to -1.0 ~ 1.0
             verts_screen_3d = batch_verts_ndc_to_screen(verts_ndc_3d, image_size=self.H)
             landmarks_3d_screen = self.flame.seletec_3d68(verts_screen_3d).detach().cpu().numpy()   # [N, 68, 3]
@@ -1181,6 +1225,8 @@ class Tracker():
             'texture': texture.detach().cpu().numpy(),                # [1,3,256,256]
             'light': (light + d_light).detach().cpu().numpy(),        # [1,9,3]
             'cam': optimized_camera_pose.detach().cpu().numpy(),      # [1,6]
+            'fov': optimized_fov.detach().cpu().numpy(),              # [1]
+            'K': Ks.detach().cpu().numpy(),                           # [1,3,3]
             'img_rendered': rendered_mesh_shape_img[None],            # [1,256,256,3]
             'mesh_rendered': rendered_textured[None],                 # [1,256,256,3]
         }

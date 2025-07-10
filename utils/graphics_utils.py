@@ -60,22 +60,61 @@ def build_view_matrix(camera_pose):
     Rt[:, :3, 3] = torch.stack([tx, ty, tz], dim=-1)
     return Rt  # [B, 4, 4]
 
-def fov_to_focal(fov, sensor_size):
-    fov_rad = math.radians(fov)
-    focal_length = 0.5 * sensor_size / math.tan(0.5 * fov_rad)
+# def fov_to_focal(fov, sensor_size):
+#     fov_rad = math.radians(fov)
+#     focal_length = 0.5 * sensor_size / math.tan(0.5 * fov_rad)
+#     return focal_length
+
+def fov_to_focal(fov : torch.Tensor, sensor_size : int):
+    """
+    Args:
+        fov : either an int/float value, or a tensor, or a batch of tensors [N]
+        sensor_size : int  we assume the image has equal height and width
+    Returns:
+        focal_length : tensor [N]
+    """
+    if not torch.is_tensor(fov):
+        # when fov is either an int/float value, convert it to tensor first
+        fov = torch.as_tensor(fov, dtype=torch.float32)#[None]
+    if len(fov.shape) == 0:
+        # extend 0-d tensor to batch
+        fov = fov[None]
+    fov_rad = torch.deg2rad(fov)
+    focal_length = 0.5 * sensor_size / torch.tan(0.5 * fov_rad)
     return focal_length
 
-def build_intrinsics(batch_size, image_size, focal_length, device='cuda'):
+# def build_intrinsics(batch_size, image_size, focal_length, device='cuda'):
+#     H = W = image_size
+#     fx = fy = focal_length
+#     cx = W / 2.0
+#     cy = H / 2.0
+#     K = torch.tensor([
+#         [fx, 0, cx],
+#         [0, fy, cy],
+#         [0, 0, 1.0]
+#     ], dtype=torch.float32, device=device)
+#     K = K.unsqueeze(0).expand(batch_size, -1, -1).clone()
+#     return K
+
+def build_intrinsics(focal_length : torch.Tensor, image_size : int):
+    """
+    Args:
+        focal_length : tensor [N]
+        image_size : int (assumes square image)
+    Returns:
+        K : tensor [N, 3, 3]
+    """
+    batch_size = focal_length.shape[0]
+    device = focal_length.device
     H = W = image_size
-    fx = fy = focal_length
     cx = W / 2.0
     cy = H / 2.0
-    K = torch.tensor([
-        [fx, 0, cx],
-        [0, fy, cy],
-        [0, 0, 1.0]
-    ], dtype=torch.float32, device=device)
-    K = K.unsqueeze(0).expand(batch_size, -1, -1).clone()
+    # Each row as a [N, 3] tensor
+    row0 = torch.stack([focal_length, torch.zeros(batch_size, device=device), torch.full((batch_size,), cx, device=device)], dim=1)
+    row1 = torch.stack([torch.zeros(batch_size, device=device), focal_length, torch.full((batch_size,), cy, device=device)], dim=1)
+    row2 = torch.tensor([0., 0., 1.], device=device).expand(batch_size, 3)
+    # Stack rows into final K [N, 3, 3]
+    K = torch.stack([row0, row1, row2], dim=1)
     return K
 
 def projection_from_intrinsics(K, image_size, z_near=0.1, z_far=10.0, z_sign=1):
@@ -136,6 +175,20 @@ def batch_verts_ndc_to_screen(ndc, image_size):
     screen = (ndc / 2.0 + 0.5) * image_size
     return screen
 
+
+
+
+# if __name__ == '__main__':
+#     # unit test
+#     fov = torch.tensor([12, 20, 25])
+#     sensor_size = 512
+#     focal_length = fov_to_focal(fov, sensor_size)
+
+#     print(focal_length)
+
+#     K = build_intrinsics(focal_length=focal_length, image_size=sensor_size)
+
+#     print(K.shape)
 
 
 
