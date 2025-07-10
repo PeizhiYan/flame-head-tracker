@@ -18,8 +18,8 @@
 
 **Current Version**: v3.5.0 🍧 (July 07, 2025)
 
-> [!NOTE]
-> Added optimizable camera FOV.
+> **Update:**
+> - Added optimizable camera FOV.
 
 **Previous Versions**:
 - v3.4.1 (https://github.com/PeizhiYan/flame-head-tracker/tree/v3.4.1)
