@@ -6,6 +6,12 @@ import torch
 import numpy as np
 
 
+def compute_l2_distance_per_sample(verts1, verts2):
+    # verts1, verts2: [N, K, 2]
+    # returns: [N] (mean over landmarks for each sample, no batch mean)
+    return torch.sqrt(((verts1 - verts2) ** 2).sum(2)).mean(1)
+
+
 def compute_batch_pixelwise_l1_loss(gt_imgs, pred_imgs, gt_face_masks):
     """
     Compute the pixel-wise mean L1 loss between ground truth and rendered images within the face mask region for a batch.
@@ -28,8 +34,11 @@ def compute_batch_pixelwise_l1_loss(gt_imgs, pred_imgs, gt_face_masks):
     l1_loss = torch.abs(gt_imgs - pred_imgs)  # [N, C, H, W]
     l1_loss = l1_loss * gt_face_masks # [N, C, H, W]
 
-    # Return the average loss over the batch
-    return l1_loss.mean()
+    # Average over C, H, W for each sample
+    loss_per_sample = l1_loss.sum(dim=(1, 2, 3)) / (gt_face_masks.sum(dim=(1, 2, 3)) * gt_imgs.shape[1] + 1e-8)
+
+    # Return the sum loss over the batch
+    return loss_per_sample.sum()
 
 
 def compute_ear_landmarks_loss(left_ear_landmarks2d, right_ear_landmarks2d, gt_ear_landmarks, yaw_angle):

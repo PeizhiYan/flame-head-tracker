@@ -189,3 +189,42 @@ def render_geometry(vertices, verts_ndc_3d, faces, device, render_size=256):
     return image, foreground_mask
 
 
+@torch.no_grad()
+def prepare_batch_visualized_results(vertices, faces, in_dict, verts_ndc_3d, RENDER_SIZE, 
+                                     landmarks_2d_screen, eye_landmarks2d_screen, ear_landmarks2d_screen):
+    """
+    Returns:
+        img_rendered_batch: [N, 256, 256, 3]
+        mesh_rendered_batch: [N, 256, 256, 3]
+    """
+
+    img_rendered_list = []   # to store blended+landmark images
+    mesh_rendered_list = []  # to store raw mesh rendering
+
+    for n in range(vertices.shape[0]):
+        img_input = np.copy(in_dict['img_resized'][n])  # [256, 256, 3]
+        mesh_rendered, fg_mask = render_geometry(
+            vertices[n].detach().cpu().numpy(), 
+            verts_ndc_3d[n].detach().cpu().numpy(), 
+            faces=np.copy(faces),
+            device=vertices.device,
+            render_size=RENDER_SIZE
+        )
+        # Blend mesh with original image
+        img_rendered = cv2.addWeighted(img_input, 0.4, mesh_rendered, 0.6, 0)
+        # Draw landmarks on blended image
+        img_rendered = draw_landmarks(
+            img_rendered,
+            landmarks_2d_screen[n],
+            eye_landmarks2d_screen[n],
+            ear_landmarks2d_screen[n],
+            blendweight=1.0
+        )
+        img_rendered_list.append(img_rendered)
+        mesh_rendered_list.append(mesh_rendered)
+
+    # Convert to batched numpy arrays: [N, 256, 256, 3]
+    img_rendered_batch = np.stack(img_rendered_list, axis=0)
+    mesh_rendered_batch = np.stack(mesh_rendered_list, axis=0)
+
+    return img_rendered_batch, mesh_rendered_batch

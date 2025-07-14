@@ -16,15 +16,18 @@
 > [!NOTE]
 > This project depends on other third-party libraries or code, which may be licensed under different terms. When using this project, you are required to comply with the license terms of any dependencies in addition to the MIT License. Please review the licenses of all dependencies before use or distribution.
 
-**Current Version**: v3.5.0 🍧 (July 07, 2025)
+**Current Version**: v4.0 🍧 (July 14, 2025)
 
 > **Update:**
-> - Added optimizable camera FOV.
+> - Improved tracking speed: 
+>   - ~0.5s/frame in landmark-based fitting mode (on Nvidia 4090)
+>   - ~1.3s/frame in photometric fitting mode (on Nvidia 4090)
+> - Supports optimizable camera FOV.
 
 **Previous Versions**:
-- v3.4.1 (https://github.com/PeizhiYan/flame-head-tracker/tree/v3.4.1)
-- v3.3 stable (https://github.com/PeizhiYan/flame-head-tracker/tree/v3.3)
-- v3.2 stable (https://github.com/PeizhiYan/flame-head-tracker/tree/v3.2)
+- v3.4.1 🍦 (https://github.com/PeizhiYan/flame-head-tracker/tree/v3.4.1)
+- v3.3 stable 🍀 (https://github.com/PeizhiYan/flame-head-tracker/tree/v3.3)
+- v3.2 stable 🎅 (https://github.com/PeizhiYan/flame-head-tracker/tree/v3.2)
 
 ## Supported Features:
 
@@ -63,7 +66,7 @@ The result ```ret_dict``` contains the following data:
 - **light** `(1, 9, 3)`    The estimated SH lighting coefficients.  
 - **cam** `(1, 6)`    The estimated 6DoF camera pose (yaw, pitch, roll, x, y, z).  
 - **fov** `(1)`    The optimized camera FOV.
-- **K** `(1, 3, 3)`    The camera intrinsic matrix.  
+- **K** `(1, 3, 3)`    The camera intrinsic matrix (assume image size is 256x256).  
 - **img_rendered** `(1, 256, 256, 3)`    Rendered shape on top of the original image (for visualization purposes only).  
 - **mesh_rendered** `(1, 256, 256, 3)`    Rendered mesh shape with landmarks (for visualization purposes only).  
 - **img** `(1, 512, 512, 3)`    The image on which the FLAME model was fit. (If ```realign==True``` ```img``` is identical to ```img_aligned```)  

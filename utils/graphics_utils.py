@@ -117,21 +117,41 @@ def build_intrinsics(focal_length : torch.Tensor, image_size : int):
     K = torch.stack([row0, row1, row2], dim=1)
     return K
 
+# def projection_from_intrinsics(K, image_size, z_near=0.1, z_far=10.0, z_sign=1):
+#     B = K.shape[0]
+#     h = w = image_size
+#     fx = K[..., 0, 0]
+#     fy = K[..., 1, 1]
+#     cx = K[..., 0, 2]
+#     cy = K[..., 1, 2]
+#     proj = torch.zeros((B, 4, 4), device=K.device, dtype=K.dtype)
+#     proj[:, 0, 0] = 2 * fx / w
+#     proj[:, 1, 1] = 2 * fy / h
+#     proj[:, 0, 2] = (w - 2 * cx) / w
+#     proj[:, 1, 2] = (h - 2 * cy) / h
+#     proj[:, 2, 2] = z_sign * (z_far + z_near) / (z_far - z_near)
+#     proj[:, 2, 3] = -2 * z_far * z_near / (z_far - z_near)
+#     proj[:, 3, 2] = z_sign
+#     return proj
+
 def projection_from_intrinsics(K, image_size, z_near=0.1, z_far=10.0, z_sign=1):
-    B = K.shape[0]
+    """ Build projection matrices from camera intrinsic matrices """
     h = w = image_size
     fx = K[..., 0, 0]
     fy = K[..., 1, 1]
     cx = K[..., 0, 2]
     cy = K[..., 1, 2]
-    proj = torch.zeros((B, 4, 4), device=K.device, dtype=K.dtype)
-    proj[:, 0, 0] = 2 * fx / w
-    proj[:, 1, 1] = 2 * fy / h
-    proj[:, 0, 2] = (w - 2 * cx) / w
-    proj[:, 1, 2] = (h - 2 * cy) / h
-    proj[:, 2, 2] = z_sign * (z_far + z_near) / (z_far - z_near)
-    proj[:, 2, 3] = -2 * z_far * z_near / (z_far - z_near)
-    proj[:, 3, 2] = z_sign
+    zeros = torch.zeros_like(fx)
+    z_signs = torch.full_like(fx, float(z_sign))
+    z22_value = float(z_sign * (z_far + z_near) / (z_far - z_near))
+    z23_value = float(-2 * z_far * z_near / (z_far - z_near))
+    z22 = torch.full_like(fx, z22_value)
+    z23 = torch.full_like(fx, z23_value)
+    row0 = torch.stack([2 * fx / w, zeros, (w - 2 * cx) / w, zeros], dim=-1)
+    row1 = torch.stack([zeros, 2 * fy / h, (h - 2 * cy) / h, zeros], dim=-1)
+    row2 = torch.stack([zeros, zeros, z22, z23], dim=-1)
+    row3 = torch.stack([zeros, zeros, z_signs, zeros], dim=-1)
+    proj = torch.stack([row0, row1, row2, row3], dim=1)  # [B, 4, 4]
     return proj
 
 def batch_perspective_projection(verts, camera_pose, K, image_size, near=0.1, far=10.0):
