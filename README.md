@@ -9,7 +9,7 @@
 </div>
 
 <div align="center"> 
-  <b><img src="./assets/demo_gifs/output_IMG_2647.gif" alt="drawing" width="660"/></b>
+  <b><img src="./assets/demo_gifs/output_IMG_2647.gif" alt="drawing" width="78%"/></b>
   <br>
 </div>
 
