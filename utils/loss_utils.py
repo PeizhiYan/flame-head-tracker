@@ -6,10 +6,32 @@ import torch
 import numpy as np
 
 
-def compute_l2_distance_per_sample(verts1, verts2):
+def compute_l2_distance_per_sample(verts1, verts2, confidence = None):
     # verts1, verts2: [N, K, 2]
+    # confidence: [N, K]
     # returns: [N] (mean over landmarks for each sample, no batch mean)
-    return torch.sqrt(((verts1 - verts2) ** 2).sum(2)).mean(1)
+    diff = verts1 - verts2                  # [N, K, 2]
+    dist = torch.sqrt((diff ** 2).sum(2))   # [N, K]
+    if confidence is not None:
+        dist = dist * confidence            # [N, K]
+    return dist.mean(1)                     # [N]
+
+
+def compute_l1_distance_per_sample(verts1, verts2, confidence=None):
+    """
+    Computes per-sample mean L1 distance between verts1 and verts2.
+    Optionally applies confidence weights to each vertex.
+
+    :param verts1: Tensor of shape [N, K, 2]
+    :param verts2: Tensor of shape [N, K, 2]
+    :param confidence: Optional tensor of shape [N, K]
+    :return: Tensor of shape [N] — mean L1 distance per sample
+    """
+    diff = verts1 - verts2                      # [N, K, 2]
+    dist = torch.sum(torch.abs(diff), dim=2)    # [N, K] — L1 norm
+    if confidence is not None:
+        dist = dist * confidence                # [N, K] apply per-point confidence
+    return dist.mean(1)                         # [N] mean over landmarks, per sample
 
 
 def compute_batch_pixelwise_l1_loss(gt_imgs, pred_imgs, gt_face_masks):

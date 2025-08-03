@@ -44,14 +44,15 @@ from utils.general_utils import check_nan_in_dict, prepare_batch_visualized_resu
 import utils.o3d_utils as o3d_utils
 from utils.image_utils import read_img, image_align, get_face_mask
 from utils.graphics_utils import fov_to_focal, build_intrinsics, batch_perspective_projection, \
-                                 batch_verts_clip_to_ndc, batch_verts_ndc_to_screen
+                                 batch_verts_clip_to_ndc, batch_verts_ndc_to_screen, \
+                                 rotation_vector_to_euler_angles
 from utils.matting_utils import load_matting_model, matting_single_image
 
 
 class Tracker():
 
     def __init__(self, tracker_cfg):
-        self.VERSION = '4.0'
+        self.VERSION = '4.1'
         flame_cfg = {
             'mediapipe_face_landmarker_v2_path': tracker_cfg['mediapipe_face_landmarker_v2_path'],
             'flame_model_path': tracker_cfg['flame_model_path'],
@@ -459,7 +460,8 @@ class Tracker():
                 list_in_dicts.append(in_dict)
                 batch_valid_indices.append(i)
 
-        if len(batch_valid_indices) == 0: return None
+        if len(batch_valid_indices) == 0: 
+            return None, None
         batch_valid_indices = np.array(batch_valid_indices)
 
         batch_in_dicts = {}
@@ -554,11 +556,15 @@ class Tracker():
             ret_dict = self.run_fitting(in_dict=in_dict, shape_code=shape_code, temporal_smoothing=temporal_smoothing)
 
         if ret_dict is None:
+            if batch_processing:
+                return None, None
             return None
 
         # check for NaNs, if there is any, return None
         _, nan_status = check_nan_in_dict(ret_dict)
         if nan_status:
+            if batch_processing:
+                return None, None
             return None
 
         # add more data
@@ -577,6 +583,141 @@ class Tracker():
         else:
             return ret_dict
     
+
+    def run_rigid_camera_pose_fitting(self, shape, exp, head_pose, jaw_pose, 
+                                      gt_landmarks, gt_ear_landmarks=None, temporal_smoothing=False):
+        batch_size = shape.shape[0]
+
+        # FLAME reconstruction from coefficients (only do it once it rigid optimization)
+        with torch.no_grad():
+            vertices, _, _ = self.flame(shape_params=shape, expression_params=exp, 
+                                        head_pose_params=head_pose, jaw_pose_params=jaw_pose) # [N, V, 3]
+            face_68_vertices = self.flame.seletec_3d68(vertices)    # [N, 68, 3]
+            left_ear_vertices = vertices[:, self.L_EAR_INDICES, :]  # [N, 20, 3]
+            right_ear_vertices = vertices[:, self.R_EAR_INDICES, :] # [N, 20, 3]
+            concat_vertices = torch.cat([face_68_vertices, left_ear_vertices, right_ear_vertices], dim=1) # [N, 108, 3]
+
+        # prepare 6DoF camera pose tensor and FOV tensor
+        fov = np.full((batch_size,), self.fov, dtype=np.float32)  # [N]
+        fov = torch.tensor(fov, dtype=torch.float32).to(self.device).detach()
+        camera_pose = np.zeros([batch_size, 6], dtype=np.float32) # (yaw, pitch, roll, x, y, z)
+        camera_pose[:, -1] = self.distance # set the camera to origin distance
+        camera_pose = torch.tensor(camera_pose, dtype=torch.float32).to(self.device).detach()
+
+        # prepare camera pose and fov offsets (to be optimized)
+        d_camera_rotation = nn.Parameter(torch.zeros([batch_size, 3], dtype=torch.float32, device=self.device))
+        d_camera_translation = nn.Parameter(torch.zeros([batch_size, 3], dtype=torch.float32, device=self.device))
+        d_fov = nn.Parameter(torch.zeros([batch_size], dtype=torch.float32, device=self.device))
+        camera_params = [
+            {'params': [d_camera_translation], 'lr': 0.05}, 
+            {'params': [d_camera_rotation], 'lr': 0.05},
+        ]
+        if self.optimize_fov:
+            camera_params.append({'params': [d_fov], 'lr': 0.05})
+
+        # camera pose optimizer
+        e_opt_rigid = torch.optim.Adam(
+            camera_params,
+            weight_decay=0.00001
+        )
+
+        # prepare face landmarks weights
+        with torch.no_grad():
+            lmk_weights = torch.ones([batch_size,68], dtype=torch.float32).to(self.device)
+            lmk_weights[:, 17:]   = 1.5      # face 51 landmarks
+            lmk_weights[:, 0:17]  = 0.75     # jawline
+            lmk_weights[:, 0:3]   = 0.5      # jawline
+            lmk_weights[:, 14:17] = 0.5      # jawline
+            lmk_weights[:, 36:48] = 3.0      # eye contours
+            lmk_weights[:, 49:]   = 2.0      # mouth contours
+            lmk_weights[:, 31:36] = 0.75     # nose bottom line
+        
+        # optimization loop
+        total_iterations = 1500
+        for iter in range(total_iterations):
+            # update learning rate
+            if iter == 1000:
+                e_opt_rigid.param_groups[0]['lr'] = 0.005    # translation
+                e_opt_rigid.param_groups[1]['lr'] = 0.005    # rotation
+                if self.optimize_fov:
+                    e_opt_rigid.param_groups[2]['lr'] = 0.005     # fov
+
+            # compute camera intrinsics
+            optimized_fov = torch.clamp(fov + d_fov, min=10.0, max=50.0)                    # [N]
+            optimized_focal_length = fov_to_focal(fov=optimized_fov, sensor_size=self.H)    # [N]
+            Ks = build_intrinsics(focal_length=optimized_focal_length, image_size=self.H)   # [N,3,3]
+
+            # project the vertices to 2D
+            optimized_camera_pose = camera_pose + torch.cat([d_camera_rotation, d_camera_translation], dim=-1) # [N, 6]
+            concat_verts_clip = batch_perspective_projection(verts=concat_vertices, camera_pose=optimized_camera_pose, 
+                                                             K=Ks, image_size=self.H, near=self.znear, far=self.zfar) # [N, 108, 3]
+            concat_verts_ndc_3d = batch_verts_clip_to_ndc(concat_verts_clip) # output [N, 108, 3] normalized to -1.0 ~ 1.0
+            concat_verts_ndc_2d = concat_verts_ndc_3d[:,:,:2]
+            
+            # confidence weights (TODO)
+            # with torch.no_grad():
+            #     conf_weights = torch.ones([batch_size,68], dtype=torch.float32).to(self.device)
+
+            # face 68 landmarks loss
+            landmarks2d = concat_verts_ndc_2d[:,:68,:] # [N, 68, 3] normalized to -1.0 ~ 1.0
+            loss_facial = compute_l2_distance_per_sample(landmarks2d[:, 17:, :2], gt_landmarks[:, 17:, :2]).sum() * 300   # face 51 landmarks
+            loss_jawline = compute_l2_distance_per_sample(landmarks2d[:, :17, :2], gt_landmarks[:, :17, :2]).sum() * 200 # jawline loss
+            loss_lmk = loss_facial + loss_jawline # [N]
+            # loss_lmk = compute_l2_distance_per_sample(landmarks2d[:, :, :2], gt_landmarks[:, :, :2], lmk_weights).sum() * 500
+
+            # ear landmarks loss
+            EAR_LOSS_THRESHOLD = 0.25 # sometimes the detected ear landmarks are not accurate
+            loss_ear = 0
+            if self.use_ear_landmarks:
+                left_ear_landmarks2d = concat_verts_ndc_2d[:,68:88,:2]    # [N, 20, 2]
+                right_ear_landmarks2d = concat_verts_ndc_2d[:,88:108,:2]  # [N, 20, 2]
+
+                with torch.no_grad():
+                    euler_angles = rotation_vector_to_euler_angles(rot_vec = optimized_camera_pose[:, :3]) # [N, 3]
+                    yaw_angles = euler_angles[:,0].detach()   # [N]
+                    pitch_angles = euler_angles[:,1].detach() # [N]
+                    mask_use_l = (yaw_angles > 0).float()   # [N]
+                    mask_use_r = (yaw_angles < 0).float()   # [N]
+                    abs_yaw_angles = torch.abs(yaw_angles)  # [N]
+                    abs_yaw_angles[abs_yaw_angles < 0.1] = 0.0  # zero out small yaw angles
+                    abs_pitch_angles = torch.abs(pitch_angles)  # [N]
+                    abs_pitch_angles[abs_pitch_angles < 0.15] = 0.0  # zero out small pitch angles
+                    angle_weights = abs_yaw_angles + abs_pitch_angles
+
+                loss_l_ear = compute_l2_distance_per_sample(left_ear_landmarks2d, gt_ear_landmarks)
+                mask_l_ear = (loss_l_ear < EAR_LOSS_THRESHOLD).float()
+
+                loss_r_ear = compute_l2_distance_per_sample(right_ear_landmarks2d, gt_ear_landmarks)
+                mask_r_ear = (loss_r_ear < EAR_LOSS_THRESHOLD).float()
+
+                loss_l_ear = loss_l_ear * mask_l_ear * mask_use_l # values above threshold become 0
+                loss_r_ear = loss_r_ear * mask_r_ear * mask_use_r # values above threshold become 0
+
+                loss_ear = loss_l_ear + loss_r_ear # [N]
+                loss_ear = loss_ear * 150 * angle_weights
+                loss_ear = loss_ear.sum()
+
+            if temporal_smoothing and batch_size >= 2 and iter > 600:
+                reg_rot = torch.sum((optimized_camera_pose[1:,:3] - optimized_camera_pose[:-1,:3]) ** 2)
+                reg_trans = torch.sum((optimized_camera_pose[1:,3:] - optimized_camera_pose[:-1,3:]) ** 2)
+                loss_reg_cam_smooth = 150 * reg_rot + 150 * reg_trans
+                # if iter % 100 == 0:
+                #     print(loss_facial.item(), reg_rot.item(), reg_trans.item())
+            else:
+                loss_reg_cam_smooth = 0
+
+            # loss = loss_facial + loss_jawline + loss_ear + loss_reg_cam_smooth
+            loss = loss_lmk + loss_ear + loss_reg_cam_smooth
+            # if iter % 100 == 0:
+            #     print(f"Iter {iter}: loss_lmk={loss_lmk.item():.4f}, loss_ear={loss_ear.item() if isinstance(loss_ear, torch.Tensor) else loss_ear:.4f}, loss_reg_cam_smooth={loss_reg_cam_smooth.item() if isinstance(loss_reg_cam_smooth, torch.Tensor) else loss_reg_cam_smooth:.4f}, total_loss={loss.item():.4f}")
+
+            loss = torch.nan_to_num(loss, nan=0.0, posinf=1e5)
+            e_opt_rigid.zero_grad()
+            loss.backward()
+            e_opt_rigid.step()
+
+        return camera_pose, fov, d_camera_rotation.detach(), d_camera_translation.detach(), d_fov.detach()
+
 
     def run_fitting(self, in_dict, shape_code : np.array = None, temporal_smoothing : bool = False):
         """ Landmark-Based Fitting
@@ -604,6 +745,8 @@ class Tracker():
         gt_landmarks = torch.from_numpy(in_dict['gt_landmarks']).to(self.device).detach() # [N, 68, 2]
         if self.use_ear_landmarks:
             gt_ear_landmarks = torch.from_numpy(in_dict['gt_ear_landmarks']).to(self.device).detach() # [N, 20, 2]
+        else:
+            gt_ear_landmarks = None
         gt_eye_landmarks = torch.from_numpy(in_dict['gt_eye_landmarks']).to(self.device).detach() # [N, 10, 2]
 
         # prepare FLAME coefficients in pytorch tensors
@@ -616,92 +759,9 @@ class Tracker():
         ############################################################
         ## Stage 1: rigid fitting (estimate the 6DoF camera pose)  #
         ############################################################
-
-        # FLAME reconstruction from coefficients (only do it once it rigid optimization)
-        with torch.no_grad():
-            vertices, _, _ = self.flame(shape_params=shape, expression_params=exp, 
-                                        head_pose_params=head_pose, jaw_pose_params=jaw_pose) # [N, V, 3]
-            face_68_vertices = self.flame.seletec_3d68(vertices)    # [N, 68, 3]
-            left_ear_vertices = vertices[:, self.L_EAR_INDICES, :]  # [N, 20, 3]
-            right_ear_vertices = vertices[:, self.R_EAR_INDICES, :] # [N, 20, 3]
-            concat_vertices = torch.cat([face_68_vertices, left_ear_vertices, right_ear_vertices], dim=1) # [N, 108, 3]
-
-        # prepare 6DoF camera pose tensor and FOV tensor
-        fov = np.full((batch_size,), self.fov, dtype=np.float32)  # [N]
-        fov = torch.tensor(fov, dtype=torch.float32).to(self.device).detach()
-        camera_pose = np.zeros([batch_size, 6], dtype=np.float32) # (yaw, pitch, roll, x, y, z)
-        camera_pose[:, -1] = self.distance # set the camera to origin distance
-        camera_pose = torch.tensor(camera_pose, dtype=torch.float32).to(self.device).detach()
-
-        # prepare camera pose and fov offsets (to be optimized)
-        d_camera_rotation = nn.Parameter(torch.zeros([batch_size, 3], dtype=torch.float32, device=self.device))
-        d_camera_translation = nn.Parameter(torch.zeros([batch_size, 3], dtype=torch.float32, device=self.device))
-        d_fov = nn.Parameter(torch.zeros([batch_size], dtype=torch.float32, device=self.device))
-        camera_params = [
-            {'params': [d_camera_translation], 'lr': 0.05}, 
-            {'params': [d_camera_rotation], 'lr': 0.05},
-        ]
-        if self.optimize_fov:
-            camera_params.append({'params': [d_fov], 'lr': 0.1})
-
-        # camera pose optimizer
-        e_opt_rigid = torch.optim.Adam(
-            camera_params,
-            weight_decay=0.00001
+        camera_pose, fov, d_camera_rotation, d_camera_translation, d_fov = self.run_rigid_camera_pose_fitting(
+            shape, exp, head_pose, jaw_pose, gt_landmarks, gt_ear_landmarks, temporal_smoothing
         )
-        
-        # optimization loop
-        total_iterations = 1200
-        for iter in range(total_iterations):
-
-            # update learning rate
-            if iter == 700:
-                e_opt_rigid.param_groups[0]['lr'] = 0.005    # translation
-                e_opt_rigid.param_groups[1]['lr'] = 0.005    # rotation
-                if self.optimize_fov:
-                    e_opt_rigid.param_groups[2]['lr'] = 0.01     # fov
-
-            # compute camera intrinsics
-            optimized_fov = torch.clamp(fov + d_fov, min=10.0, max=50.0)                    # [N]
-            optimized_focal_length = fov_to_focal(fov=optimized_fov, sensor_size=self.H)    # [N]
-            Ks = build_intrinsics(focal_length=optimized_focal_length, image_size=self.H)   # [N,3,3]
-
-            # project the vertices to 2D
-            optimized_camera_pose = camera_pose + torch.cat([d_camera_rotation, d_camera_translation], dim=-1) # [N, 6]
-            concat_verts_clip = batch_perspective_projection(verts=concat_vertices, camera_pose=optimized_camera_pose, 
-                                                             K=Ks, image_size=self.H, near=self.znear, far=self.zfar) # [N, 108, 3]
-            concat_verts_ndc_3d = batch_verts_clip_to_ndc(concat_verts_clip) # output [N, 108, 3] normalized to -1.0 ~ 1.0
-            concat_verts_ndc_2d = concat_verts_ndc_3d[:,:,:2]
-
-            # face 68 landmarks loss
-            landmarks2d = concat_verts_ndc_2d[:,:68,:] # [N, 68, 3] normalized to -1.0 ~ 1.0
-            loss_facial = compute_l2_distance_per_sample(landmarks2d[:, 17:, :2], gt_landmarks[:, 17:, :2]).sum() * 300  # face 51 landmarks
-            loss_jawline = compute_l2_distance_per_sample(landmarks2d[:, :17, :2], gt_landmarks[:, :17, :2]).sum() * 200 # jawline loss
-
-            # ear landmarks loss
-            EAR_LOSS_THRESHOLD = 0.20 # sometimes the detected ear landmarks are not accurate
-            loss_ear = 0
-            if self.use_ear_landmarks:
-                left_ear_landmarks2d = concat_verts_ndc_2d[:,68:88,:2]    # [N, 20, 2]
-                right_ear_landmarks2d = concat_verts_ndc_2d[:,88:108,:2]  # [N, 20, 2]
-                
-                loss_l_ear = compute_l2_distance_per_sample(left_ear_landmarks2d, gt_ear_landmarks)
-                mask_l_ear = (loss_l_ear < EAR_LOSS_THRESHOLD).float()
-                loss_l_ear = loss_l_ear * mask_l_ear  # values above threshold become 0
-
-                loss_r_ear = compute_l2_distance_per_sample(right_ear_landmarks2d, gt_ear_landmarks)
-                mask_r_ear = (loss_r_ear < EAR_LOSS_THRESHOLD).float()
-                loss_r_ear = loss_r_ear * mask_r_ear  # values above threshold become 0
-                
-                abs_yaw_angles = torch.abs(optimized_camera_pose[:,0].detach()) # [N]
-                loss_ear = loss_l_ear + loss_r_ear # [N]
-                loss_ear = loss_ear * 150 * abs_yaw_angles
-                loss_ear = loss_ear.sum()
-
-            loss = loss_facial + loss_jawline + loss_ear
-            e_opt_rigid.zero_grad()
-            loss.backward()
-            e_opt_rigid.step()
 
         # the optimized camera pose and intrinsics from the Stage 1
         optimized_camera_pose = camera_pose + torch.cat([d_camera_rotation, d_camera_translation], dim=-1)        
@@ -770,16 +830,17 @@ class Tracker():
             eyes_landmarks2d = verts_ndc_3d[:,self.R_EYE_INDICES + self.L_EYE_INDICES,:2]    # [N, 10, 2]
 
             # loss computation and optimization
-            loss_facial = compute_l2_distance_per_sample(landmarks2d[:, 17:, :2], gt_landmarks[:, 17:, :2]).sum() * 500
-            loss_eyes = compute_l2_distance_per_sample(eyes_landmarks2d, gt_eye_landmarks).sum() * 500
+            loss_facial = compute_l1_distance_per_sample(landmarks2d[:, 17:, :2], gt_landmarks[:, 17:, :2]).sum() * 500
+            loss_eyes = compute_l1_distance_per_sample(eyes_landmarks2d, gt_eye_landmarks).sum() * 500
             loss_reg_exp = torch.sum(optimized_exp**2) * 0.025 # regularization on expression coefficients
             if temporal_smoothing and batch_size >= 2:
                 # when optimizing on monocular video, we smooth the expression codes temporally
-                loss_reg_exp_smooth = (torch.sum((optimized_exp[1:] - optimized_exp[:-1]) ** 2) / 2) * 1e-4
+                loss_reg_exp_smooth = (torch.sum((optimized_exp[1:] - optimized_exp[:-1]) ** 2) / 2) * 0.1
             else:
                 loss_reg_exp_smooth = 0
             
             loss = loss_facial + loss_eyes + loss_reg_exp + loss_reg_exp_smooth
+            loss = torch.nan_to_num(loss, nan=0.0, posinf=1e4)
             e_opt_fine.zero_grad()
             loss.backward()
             e_opt_fine.step()
@@ -812,6 +873,9 @@ class Tracker():
             rendered_mesh_shape_img, rendered_mesh_shape = \
                   prepare_batch_visualized_results(vertices, self.faces, in_dict, verts_ndc_3d, self.RENDER_SIZE, 
                                                    landmarks_2d_screen, eye_landmarks2d_screen, ear_landmarks2d_screen)
+            
+            # convert the rotation vectors back to Euler angles
+            optimized_camera_pose[:, :3] = rotation_vector_to_euler_angles(rot_vec = optimized_camera_pose[:, :3])
 
         ####################
         # Prepare results  #
@@ -889,93 +953,18 @@ class Tracker():
         ############################################################
         ## Stage 1: rigid fitting (estimate the 6DoF camera pose)  #
         ############################################################
-        
-        # FLAME reconstruction from coefficients (only do it once it rigid optimization)
-        with torch.no_grad():
-            vertices, _, _ = self.flame(shape_params=shape, expression_params=exp, 
-                                        head_pose_params=head_pose, jaw_pose_params=jaw_pose) # [N, V, 3]
-            face_68_vertices = self.flame.seletec_3d68(vertices)    # [N, 68, 3]
-            left_ear_vertices = vertices[:, self.L_EAR_INDICES, :]  # [N, 20, 3]
-            right_ear_vertices = vertices[:, self.R_EAR_INDICES, :] # [N, 20, 3]
-            concat_vertices = torch.cat([face_68_vertices, left_ear_vertices, right_ear_vertices], dim=1) # [N, 108, 3]
 
-        # prepare 6DoF camera pose tensor and FOV tensor
-        fov = np.full((batch_size,), self.fov, dtype=np.float32)  # [N]
-        fov = torch.tensor(fov, dtype=torch.float32).to(self.device).detach()
-        camera_pose = np.zeros([batch_size, 6], dtype=np.float32) # (yaw, pitch, roll, x, y, z)
-        camera_pose[:, -1] = self.distance # set the camera to origin distance
-        camera_pose = torch.tensor(camera_pose, dtype=torch.float32).to(self.device).detach()
-
-        # prepare camera pose offsets (to be optimized)
-        d_camera_rotation = nn.Parameter(torch.zeros([batch_size, 3], dtype=torch.float32, device=self.device))
-        d_camera_translation = nn.Parameter(torch.zeros([batch_size, 3], dtype=torch.float32, device=self.device))
-        d_fov = nn.Parameter(torch.zeros([batch_size], dtype=torch.float32, device=self.device))
-        camera_params = [
-            {'params': [d_camera_translation], 'lr': 0.005}, 
-            {'params': [d_camera_rotation], 'lr': 0.005}, 
-        ]
-        if self.optimize_fov:
-            camera_params.append({'params': [d_fov], 'lr': 0.05})
-
-        # camera pose optimizer
-        e_opt_rigid = torch.optim.Adam(
-            camera_params,
-            weight_decay=0.00001
+        camera_pose, fov, d_camera_rotation, d_camera_translation, d_fov = self.run_rigid_camera_pose_fitting(
+            shape, exp, head_pose, jaw_pose, gt_landmarks, gt_ear_landmarks, temporal_smoothing
         )
-        
-        # optimization loop
-        max_iterations = 1000
-        for iter in range(max_iterations):
-
-            # compute camera intrinsics
-            optimized_fov = torch.clamp(fov + d_fov, min=10.0, max=50.0)                    # [N]
-            optimized_focal_length = fov_to_focal(fov=optimized_fov, sensor_size=self.H)    # [N]
-            Ks = build_intrinsics(focal_length=optimized_focal_length, image_size=self.H)   # [N,3,3]
-
-            # project the vertices to 2D
-            optimized_camera_pose = camera_pose + torch.cat([d_camera_rotation, d_camera_translation], dim=-1) # [N, 6]
-            concat_verts_clip = batch_perspective_projection(verts=concat_vertices, camera_pose=optimized_camera_pose, 
-                                                             K=Ks, image_size=self.H, near=self.znear, far=self.zfar) # [N, 108, 3]
-            concat_verts_ndc_3d = batch_verts_clip_to_ndc(concat_verts_clip) # output [N, 108, 3] normalized to -1.0 ~ 1.0
-            concat_verts_ndc_2d = concat_verts_ndc_3d[:,:,:2]
-
-            # face 68 landmarks loss
-            landmarks2d = concat_verts_ndc_2d[:,:68,:] # [N, 68, 3] normalized to -1.0 ~ 1.0
-            loss_facial = compute_l2_distance_per_sample(landmarks2d[:, 17:, :2], gt_landmarks[:, 17:, :2]).sum() * 1.0  # face 51 landmarks
-            loss_jawline = compute_l2_distance_per_sample(landmarks2d[:, :17, :2], gt_landmarks[:, :17, :2]).sum() * 0.5 # jawline loss
-
-            # ear landmarks loss
-            EAR_LOSS_THRESHOLD = 0.2 # sometimes the detected ear landmarks are not accurate
-            loss_ear = 0
-            if self.use_ear_landmarks:
-                left_ear_landmarks2d = concat_verts_ndc_2d[:,68:88,:2]    # [N, 20, 2]
-                right_ear_landmarks2d = concat_verts_ndc_2d[:,88:108,:2]  # [N, 20, 2]
-                
-                loss_l_ear = compute_l2_distance_per_sample(left_ear_landmarks2d, gt_ear_landmarks)
-                mask_l_ear = (loss_l_ear < EAR_LOSS_THRESHOLD).float()
-                loss_l_ear = loss_l_ear * mask_l_ear  # values above threshold become 0
-
-                loss_r_ear = compute_l2_distance_per_sample(right_ear_landmarks2d, gt_ear_landmarks)
-                mask_r_ear = (loss_r_ear < EAR_LOSS_THRESHOLD).float()
-                loss_r_ear = loss_r_ear * mask_r_ear  # values above threshold become 0
-                
-                abs_yaw_angles = torch.abs(optimized_camera_pose[:,0].detach()) # [N]
-                loss_ear = loss_l_ear + loss_r_ear # [N]
-                loss_ear = loss_ear * 0.5 * abs_yaw_angles
-                loss_ear = loss_ear.sum()
-
-            # loss computation
-            loss = loss_facial + loss_jawline + loss_ear
-
-            # optimization step
-            e_opt_rigid.zero_grad()
-            loss.backward()
-            e_opt_rigid.step()
 
         ############################
         ## Stage 2: fine fitting   #
         ############################
-        e_opt_rigid.zero_grad() # clear gradients from stage 1
+
+        d_camera_rotation = nn.Parameter(d_camera_rotation)
+        d_camera_translation = nn.Parameter(d_camera_translation)
+        d_fov = nn.Parameter(d_fov)
 
         # prepare shape code offsets (to be optimized)
         if canonical_shape:
@@ -1018,15 +1007,15 @@ class Tracker():
             {'params': [d_exp], 'lr': 0.005}, 
             {'params': [d_jaw], 'lr': 0.005},
             {'params': [eye_pose], 'lr': 0.005},
-            {'params': [d_camera_translation], 'lr': 0.0001}, 
-            {'params': [d_camera_rotation], 'lr': 0.0001},
+            {'params': [d_camera_rotation], 'lr': 0.0025},
+            {'params': [d_camera_translation], 'lr': 0.0025}, 
             {'params': [d_light], 'lr': 0.005},
         ]
 
         if optimize_shape_and_tex:
             finetune_params.append({'params': [d_shape], 'lr': 0.001})
-            finetune_params.append({'params': [d_texture], 'lr': 0.001})
-            finetune_params.append({'params': [d_tex], 'lr': 0.001})
+            finetune_params.append({'params': [d_texture], 'lr': 0.005})
+            finetune_params.append({'params': [d_tex], 'lr': 0.005})
         
         # if self.optimize_fov:
         #     finetune_params.append({'params': [d_fov], 'lr': 0.001})
@@ -1034,7 +1023,7 @@ class Tracker():
         # fine optimizer
         e_opt_fine = torch.optim.Adam(
             finetune_params,
-            weight_decay=0.0001
+            weight_decay=0.00001
         )
 
         # initialize the texture map
@@ -1050,6 +1039,17 @@ class Tracker():
         optimized_fov = torch.clamp(fov + d_fov, min=10.0, max=50.0).detach()                    # [N]
         optimized_focal_length = fov_to_focal(fov=optimized_fov, sensor_size=self.H).detach()    # [N]
         Ks = build_intrinsics(focal_length=optimized_focal_length, image_size=self.H).detach()   # [N,3,3]
+
+        # prepare face landmarks weights
+        with torch.no_grad():
+            lmk_weights = torch.ones([batch_size,68], dtype=torch.float32).to(self.device)
+            lmk_weights[:, 17:]   = 1.5      # face 51 landmarks
+            lmk_weights[:, 0:17]  = 0.75     # jawline
+            lmk_weights[:, 0:3]   = 0.5      # jawline
+            lmk_weights[:, 14:17] = 0.5      # jawline
+            lmk_weights[:, 36:48] = 3.0      # eye contours
+            lmk_weights[:, 49:]   = 2.0      # mouth contours
+            lmk_weights[:, 31:36] = 0.75     # nose bottom line
 
         # optimization loop
         max_iterations = 400
@@ -1068,7 +1068,15 @@ class Tracker():
                                         eye_pose_params=eye_pose) # [1, V, 3]
             
             if use_canonical_texture == False:
-                texture = torch.clamp(self.flametex(tex + d_tex) + d_texture, 0.0, 1.0)     # [N, 3, 256, 256]
+                if iter < 200:
+                    # only optimize the texture code
+                    texture = torch.clamp(self.flametex(tex + d_tex), 0.0, 1.0)                 # [N, 3, 256, 256]
+                else:
+                    # optimize both texture code and texture displacement map
+                    texture = torch.clamp(self.flametex(tex + d_tex) + d_texture, 0.0, 1.0)     # [N, 3, 256, 256]
+
+            # camera
+            optimized_camera_pose = camera_pose + torch.cat([d_camera_rotation, d_camera_translation], dim=-1)      
 
             # project the vertices to 2D
             verts_clip = batch_perspective_projection(verts=vertices, camera_pose=optimized_camera_pose, 
@@ -1079,7 +1087,7 @@ class Tracker():
             landmarks3d = self.flame.seletec_3d68(verts_ndc_3d) # [N, 68, 3]
             landmarks2d = landmarks3d[:,:,:2] #/ float(self.H) * 2 - 1  # [N, 68, 2] normalized to -1.0 ~ 1.0
 
-            # eyes landmarks
+            # eyeball landmarks
             eyes_landmarks2d = verts_ndc_3d[:,self.R_EYE_INDICES + self.L_EYE_INDICES,:2]    # [N, 10, 2]
 
             # ears landmarks
@@ -1090,41 +1098,67 @@ class Tracker():
             # render textured mesh (using PyTorch3D's renderer)
             rendered_output = self.flame_texture_render(vertices, verts_ndc_3d, texture, light+d_light)
             rendered_textured = rendered_output['images'][:,:3,:,:]             # [N,3,H,W] RGBA to RGB
-            photo_loss_mask = gt_face_mask
+            if temporal_smoothing or estimate_canonical:
+                # use the full head mask for video
+                rendered_alpha = rendered_output['alpha_images'][:,0,:,:]
+                photo_loss_mask = (rendered_alpha > 0.5).to(torch.bool)  # threshold at 0.5
+            else:
+                # use the face mask for random input images
+                photo_loss_mask = gt_face_mask # [N, 256, 256] boolean
 
             # face 68 landmarks loss
-            loss_facial = compute_l2_distance_per_sample(landmarks2d[:, 17:, :2], gt_landmarks[:, 17:, :2]).sum() * 1.0  # face 51 landmarks
-            loss_jawline = compute_l2_distance_per_sample(landmarks2d[:, :17, :2], gt_landmarks[:, :17, :2]).sum() * 0.5 # jawline loss
+            loss_lmks = compute_l2_distance_per_sample(landmarks2d[:, :, :2], gt_landmarks[:, :, :2], confidence=lmk_weights).sum()
 
             # ear landmarks loss
-            EAR_LOSS_THRESHOLD = 0.2 # sometimes the detected ear landmarks are not accurate
+            EAR_LOSS_THRESHOLD = 0.3 # sometimes the detected ear landmarks are not accurate
             loss_ear = 0
             if self.use_ear_landmarks:
+
+                with torch.no_grad():
+                    euler_angles = rotation_vector_to_euler_angles(rot_vec = optimized_camera_pose[:, :3]) # [N, 3]
+                    yaw_angles = euler_angles[:,0].detach() # [N]
+                    mask_use_l = (yaw_angles > 0).float()   # [N]
+                    mask_use_r = (yaw_angles < 0).float()   # [N]
+                    abs_yaw_angles = torch.abs(yaw_angles)  # [N]
+                    abs_yaw_angles[abs_yaw_angles < 0.1] = 0.0  # zero out yaw angles less than 0.1
+                
                 loss_l_ear = compute_l2_distance_per_sample(left_ear_landmarks2d, gt_ear_landmarks)
                 mask_l_ear = (loss_l_ear < EAR_LOSS_THRESHOLD).float()
-                loss_l_ear = loss_l_ear * mask_l_ear  # values above threshold become 0
+                loss_l_ear = loss_l_ear * mask_l_ear * mask_use_l # values above threshold become 0
 
                 loss_r_ear = compute_l2_distance_per_sample(right_ear_landmarks2d, gt_ear_landmarks)
                 mask_r_ear = (loss_r_ear < EAR_LOSS_THRESHOLD).float()
-                loss_r_ear = loss_r_ear * mask_r_ear  # values above threshold become 0
-                
-                abs_yaw_angles = torch.abs(optimized_camera_pose[:,0].detach()) # [N]
-                loss_ear = loss_l_ear + loss_r_ear # [N]
-                loss_ear = loss_ear * 0.5 * abs_yaw_angles
+                loss_r_ear = loss_r_ear * mask_r_ear * mask_use_r # values above threshold become 0
+
+                loss_ear = loss_l_ear + loss_r_ear          # [N]
+                loss_ear = loss_ear * 1.5 * abs_yaw_angles  # [N]
                 loss_ear = loss_ear.sum()
 
             # loss computation and optimization
-            loss_photo = compute_batch_pixelwise_l1_loss(gt_img, rendered_textured, photo_loss_mask) * 1.5     # photometric loss
+            loss_photo = compute_batch_pixelwise_l1_loss(gt_img, rendered_textured, photo_loss_mask) * 2     # photometric loss
             loss_eyes = compute_l2_distance_per_sample(eyes_landmarks2d, gt_eye_landmarks).sum() * 2
             loss_reg_shape = (torch.sum(d_shape ** 2) / 2) * 0.1 # 1e-4
             loss_reg_exp = (torch.sum(optimized_exp ** 2) / 2) * 1e-4 # 1e-3
             if temporal_smoothing and batch_size >= 2:
-                # when optimizing on monocular video, we smooth the expression codes temporally
                 loss_reg_exp_smooth = (torch.sum((optimized_exp[1:] - optimized_exp[:-1]) ** 2) / 2) * 1e-5
+                # reg_rot = torch.sum((optimized_camera_pose[1:,:3] - optimized_camera_pose[:-1,:3]) ** 2)
+                # reg_trans = torch.sum((optimized_camera_pose[1:,3:] - optimized_camera_pose[:-1,3:]) ** 2)
+                # loss_reg_cam_smooth = 0.01 * reg_rot + 0.01 * reg_trans
             else:
                 loss_reg_exp_smooth = 0
-            loss_reg = loss_reg_exp + loss_reg_exp_smooth + loss_reg_shape
-            loss = loss_photo + loss_facial + loss_jawline + loss_eyes + loss_ear + loss_reg
+                loss_reg_cam_smooth = 0
+            loss_reg = loss_reg_exp + loss_reg_shape + loss_reg_exp_smooth #+ loss_reg_cam_smooth
+            loss = loss_photo + loss_lmks + loss_eyes + loss_ear + loss_reg
+
+            # if iter % 50 == 0:
+            #     print(f"Iter {iter}: "
+            #           f"loss_photo={loss_photo.item():.4f}, "
+            #           f"loss_lmks={loss_lmks.item():.4f}, "
+            #           f"loss_eyes={loss_eyes.item():.4f}, "
+            #           f"loss_ear={loss_ear.item() if isinstance(loss_ear, torch.Tensor) else loss_ear:.4f}, "
+            #           f"loss_reg={loss_reg.item():.4f}, "
+            #           f"loss_reg_cam_smooth={loss_reg_cam_smooth}, "
+            #           f"total_loss={loss.item():.4f}")
 
             # optimization step
             e_opt_fine.zero_grad()
@@ -1153,6 +1187,9 @@ class Tracker():
                 else:
                     texture = torch.clamp(self.flametex(tex + d_tex) + d_texture, 0.0, 1.0) # [N, 3, 256, 256]
 
+            # camera pose
+            optimized_camera_pose = camera_pose + torch.cat([d_camera_rotation, d_camera_translation], dim=-1)
+
             # compute camera intrinsics
             optimized_fov = torch.clamp(fov + d_fov, min=10.0, max=50.0)                    # [N]
             optimized_focal_length = fov_to_focal(fov=optimized_fov, sensor_size=self.H)    # [N]
@@ -1179,6 +1216,9 @@ class Tracker():
             rendered_textured = rendered_textured['images'][:,:3,:,:] # [N,3,H,W] RGBA to RGB 
             rendered_textured = rendered_textured.permute(0,2,3,1).detach().cpu().numpy() # [N,H,W,3]
             rendered_textured = np.array(np.clip(rendered_textured * 255, 0, 255), dtype=np.uint8) # uint8
+
+            # convert the rotation vectors back to Euler angles
+            optimized_camera_pose[:, :3] = rotation_vector_to_euler_angles(rot_vec = optimized_camera_pose[:, :3])
 
         ####################
         # Prepare results  #

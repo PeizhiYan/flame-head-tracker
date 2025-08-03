@@ -16,12 +16,12 @@
 > [!NOTE]
 > This project depends on other third-party libraries or code, which may be licensed under different terms. When using this project, you are required to comply with the license terms of any dependencies in addition to the MIT License. Please review the licenses of all dependencies before use or distribution.
 
-**Current Version**: v4.0 🍧 (July 14, 2025)
+**Current Version**: v4.1 🍧 (Aug 02, 2025)
 
 > **Update:**
 > - Improved tracking speed: 
->   - ~0.5s/frame in landmark-based fitting mode (on Nvidia 4090)
->   - ~1.3s/frame in photometric fitting mode (on Nvidia 4090)
+>   - ~0.9s/frame in landmark-based fitting mode (on Nvidia 4090)
+>   - ~1.9s/frame in photometric fitting mode (on Nvidia 4090)
 > - Supports optimizable camera FOV.
 
 **Previous Versions**:
