@@ -281,7 +281,7 @@ Our code can be used for research purposes, **provided that the terms of the lic
 
 ## 🧸 Citation
 
-Please consider citing our work if you find this code useful. This code was originally used for "Gaussian Deja-vu" (accepted for WACV 2025 in Round 1). 
+Please consider citing our works if you find this code useful. This code was originally used for "Gaussian Deja-vu" (accepted for WACV 2025 in Round 1) and "ArchitectHead" (accepted for WACV 2026). 
 
 ```bibtex
 @InProceedings{Yan_2025_WACV,
