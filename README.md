@@ -284,6 +284,15 @@ Our code can be used for research purposes, **provided that the terms of the lic
 Please consider citing our works if you find this code useful. This code was originally used for "Gaussian Deja-vu" (accepted for WACV 2025 in Round 1) and "ArchitectHead" (accepted for WACV 2026). 
 
 ```bibtex
+@misc{Yan_2026_WACV,
+    author    = {Yan, Peizhi and Ward, Rabab and Tang, Qiang and Du, Shan},
+    title     = {ArchitectHead: Continuous Level of Detail Control for 3D Gaussian Head Avatars},
+    year      = {2025},
+    note      = {Accepted to WACV 2026}
+}
+```
+
+```bibtex
 @InProceedings{Yan_2025_WACV,
     author    = {Yan, Peizhi and Ward, Rabab and Tang, Qiang and Du, Shan},
     title     = {Gaussian Deja-vu: Creating Controllable 3D Gaussian Head-Avatars with Enhanced Generalization and Personalization Abilities},
