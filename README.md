@@ -29,6 +29,31 @@
 - v3.3 stable 🍀 (https://github.com/PeizhiYan/flame-head-tracker/tree/v3.3)
 - v3.2 stable 🎅 (https://github.com/PeizhiYan/flame-head-tracker/tree/v3.2)
 
+## 🧸 Citation
+
+Please consider citing our works if you find this code useful. This code was originally used for "Gaussian Deja-vu" (WACV 2025) and "ArchitectHead" (WACV 2026). 
+
+```bibtex
+@inproceedings{yan2026architecthead,
+  title={ArchitectHead: Continuous Level of Detail Control for 3D Gaussian Head Avatars},
+  author={Yan, Peizhi and Ward, Rabab and Tang, Qiang and Du, Shan},
+  booktitle={Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision},
+  pages={1632--1642},
+  year={2026}
+}
+```
+
+```bibtex
+@InProceedings{Yan_2025_WACV,
+    author    = {Yan, Peizhi and Ward, Rabab and Tang, Qiang and Du, Shan},
+    title     = {Gaussian Deja-vu: Creating Controllable 3D Gaussian Head-Avatars with Enhanced Generalization and Personalization Abilities},
+    booktitle = {Proceedings of the Winter Conference on Applications of Computer Vision (WACV)},
+    month     = {February},
+    year      = {2025},
+    pages     = {276-286}
+}
+```
+
 ## Supported Features:
 
 | Scenario                        | 🙂 Landmarks-based Fitting  | 🔆 Photometric Fitting  |
@@ -276,32 +301,6 @@ We want to acknowledge the contributions of the authors of these repositories. W
 Our code can be used for research purposes, **provided that the terms of the licenses of any third-party code, models, or dependencies are followed**. For commercial use, the parts of code we wrote are for free, but please be aware to get permissions from any third-party to use their code, models, or dependencies. We do not assume any responsibility for any issues, damages, or liabilities that may arise from the use of this code. Users are responsible for ensuring compliance with any legal requirements, including licensing terms and conditions, and for verifying that the code is suitable for their intended purposes.
 
 
-
-
-
-## 🧸 Citation
-
-Please consider citing our works if you find this code useful. This code was originally used for "Gaussian Deja-vu" (accepted for WACV 2025 in Round 1) and "ArchitectHead" (accepted for WACV 2026). 
-
-```bibtex
-@misc{Yan_2026_WACV,
-    author    = {Yan, Peizhi and Ward, Rabab and Tang, Qiang and Du, Shan},
-    title     = {ArchitectHead: Continuous Level of Detail Control for 3D Gaussian Head Avatars},
-    year      = {2025},
-    note      = {Accepted to WACV 2026}
-}
-```
-
-```bibtex
-@InProceedings{Yan_2025_WACV,
-    author    = {Yan, Peizhi and Ward, Rabab and Tang, Qiang and Du, Shan},
-    title     = {Gaussian Deja-vu: Creating Controllable 3D Gaussian Head-Avatars with Enhanced Generalization and Personalization Abilities},
-    booktitle = {Proceedings of the Winter Conference on Applications of Computer Vision (WACV)},
-    month     = {February},
-    year      = {2025},
-    pages     = {276-286}
-}
-```
 
 
 ## Star History
